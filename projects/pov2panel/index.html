@@ -49,7 +49,6 @@ canvas{display:block;touch-action:none}
 #shutter{position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0;z-index:5}
 .tag{position:absolute;z-index:6;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;user-select:none;pointer-events:none;color:rgba(20,16,15,.55)}
 #tag-live{top:14px;left:16px;display:flex;align-items:center;gap:8px;color:var(--ink)}
-#reclamp{width:8px;height:8px;border-radius:50%;background:var(--red)}
 #tag-hint{bottom:76px;left:16px}
 
 #hud{
@@ -164,8 +163,7 @@ canvas{display:block;touch-action:none}
 <div id="split">
   <div id="stage">
     <div id="shutter"></div>
-    <div class="tag" id="tag-live"><span id="reclamp"></span><span>Live plate · drag to orbit</span></div>
-    <div class="tag" id="tag-hint">Ghost frames mark past camera frustums</div>
+    <div class="tag" id="tag-live"><span>drag to orbit</span></div>
 
     <div id="hud">
       <button class="btn key" id="b-shot">Take panel</button>
