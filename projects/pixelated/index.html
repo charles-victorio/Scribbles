@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Pixel-blur AABB demo</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d10; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; top: 12px; left: 12px; color: #e6e6e6;
+    font: 13px/1.4 system-ui, sans-serif; background: rgba(0,0,0,0.45);
+    padding: 10px 14px; border-radius: 8px; max-width: 340px;
+    pointer-events: none;
+  }
+  #hud b { color: #fff; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>Pixel-blur AABB demo</b><br>
+  Drag to orbit &middot; scroll to zoom &middot; right-drag to pan.<br>
+  Each shape (ellipsoids and flat planes alike) gets its own quad, rebuilt
+  every frame from that shape's screen-space bounding box &mdash; none of them
+  are parented to their shape or fixed in world space, they just track
+  whatever they individually project to on screen. The planes spin through
+  edge-on to the camera to exercise the degenerate (zero-thickness) AABB case.
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "lil-gui": "https://unpkg.com/lil-gui@0.19/dist/lil-gui.esm.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import GUI from "lil-gui";
+
+// ---------- renderer / scene / camera ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d10);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, 5, 16);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x222233, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+sun.position.set(6, 10, 8);
+scene.add(sun);
+
+// ---------- colorful backdrop, just so the pixelation is obvious ----------
+const backdrop = new THREE.Group();
+const boxGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+for (let x = -10; x <= 10; x++) {
+  for (let y = -4; y <= 4; y++) {
+    const hue = ((x + 10) / 20 + (y + 4) / 40) % 1;
+    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hue, 0.6, 0.5) });
+    const box = new THREE.Mesh(boxGeo, mat);
+    box.position.set(x, y, -20);
+    backdrop.add(box);
+  }
+}
+scene.add(backdrop);
+
+// ---------- shapes to track: non-uniformly scaled ellipsoids + flat planes ----------
+// the AABB/screen-coverage math only ever reads the 8 corners of a Box3, so it
+// doesn't care whether the shape has volume - a flat plane's Box3 just has
+// min==max on its normal axis, which is a perfectly ordinary degenerate box,
+// not a case the code needs to special-case.
+const shapesGroup = new THREE.Group();
+scene.add(shapesGroup);
+
+const sphereGeo = new THREE.SphereGeometry(1, 32, 24);
+const cardGeo = new THREE.PlaneGeometry(2.4, 3.2);
+
+const shapeDefs = [
+  { kind: "ellipsoid", scale: [2.2, 0.7, 1.1], color: 0xff6b6b },
+  { kind: "ellipsoid", scale: [0.8, 2.0, 1.3], color: 0x6bc1ff },
+  { kind: "ellipsoid", scale: [1.4, 1.0, 2.4], color: 0xffd166 },
+  { kind: "ellipsoid", scale: [1.0, 1.6, 0.6], color: 0x8effa3 },
+  { kind: "plane", tilt: 0.6, color: 0xff9de2 },
+  { kind: "plane", tilt: -0.9, color: 0xb98cff },
+];
+
+const orbits = shapeDefs.map((def, i) => {
+  const geo = def.kind === "plane" ? cardGeo : sphereGeo;
+  const material = new THREE.MeshStandardMaterial({
+    color: def.color,
+    roughness: 0.4,
+    side: def.kind === "plane" ? THREE.DoubleSide : THREE.FrontSide,
+  });
+  const mesh = new THREE.Mesh(geo, material);
+  if (def.kind === "ellipsoid") mesh.scale.set(...def.scale);
+  shapesGroup.add(mesh);
+  return {
+    mesh,
+    kind: def.kind,
+    tilt: def.tilt || 0,
+    radius: 7 + i * 2.2,
+    height: 1.5 + i * 0.7,
+    speed: 0.22 + i * 0.06,
+    phase: i * (Math.PI / 3),
+  };
+});
+
+// ---------- render target: captures the scene with the blur plane hidden ----------
+const renderTarget = new THREE.WebGLRenderTarget(1, 1);
+
+function resizeRenderTarget() {
+  const size = new THREE.Vector2();
+  renderer.getDrawingBufferSize(size);
+  renderTarget.setSize(size.x, size.y);
+  blurMaterial.uniforms.resolution.value.copy(size);
+}
+
+// ---------- the tracking blur plane ----------
+const blurMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    tDiffuse: { value: renderTarget.texture },
+    resolution: { value: new THREE.Vector2() },
+    pixelSize: { value: 24 },
+  },
+  vertexShader: `
+    void main() {
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform vec2 resolution;
+    uniform float pixelSize;
+
+    // render targets hold linear color; the canvas path normally sRGB-encodes
+    // per material automatically, so a raw ShaderMaterial has to do it by hand.
+    vec3 linearToSRGB(vec3 c) {
+      vec3 t = step(vec3(0.0031308), c);
+      return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, t);
+    }
+
+    void main() {
+      vec2 block = (floor(gl_FragCoord.xy / pixelSize) + 0.5) * pixelSize;
+      vec4 texel = texture2D(tDiffuse, block / resolution);
+      gl_FragColor = vec4(linearToSRGB(texel.rgb), texel.a);
+    }
+  `,
+});
+
+// one independent blur plane per ellipsoid - they all share one material
+// (same uniforms) but get their own position/scale each frame.
+for (const o of orbits) {
+  o.plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), blurMaterial);
+  scene.add(o.plane);
+}
+
+const AABB_MARGIN = { value: 0.4 };
+const IN_FRONT_GAP = { value: 0.5 };
+const state = { blurEnabled: true };
+
+// ---------- gui ----------
+const gui = new GUI();
+gui.add(blurMaterial.uniforms.pixelSize, "value", 2, 80, 1).name("pixel size");
+gui.add(AABB_MARGIN, "value", 0, 3, 0.05).name("AABB margin");
+gui.add(IN_FRONT_GAP, "value", 0, 3, 0.05).name("plane offset");
+gui.add(state, "blurEnabled").name("blur enabled");
+
+// ---------- per-frame: fit each plane to its own ellipsoid's screen-space AABB ----------
+const box = new THREE.Box3();
+const corner = new THREE.Vector3();
+const ndc = new THREE.Vector3();
+const right = new THREE.Vector3();
+const up = new THREE.Vector3();
+const forward = new THREE.Vector3();
+const center = new THREE.Vector3();
+
+function updateBlurPlane(o) {
+  box.setFromObject(o.mesh);
+  box.expandByScalar(AABB_MARGIN.value);
+
+  camera.updateMatrixWorld();
+
+  let minDepth = Infinity;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+  for (let i = 0; i < 8; i++) {
+    corner.set(
+      i & 1 ? box.max.x : box.min.x,
+      i & 2 ? box.max.y : box.min.y,
+      i & 4 ? box.max.z : box.min.z
+    );
+
+    const depth = -corner.clone().applyMatrix4(camera.matrixWorldInverse).z;
+    minDepth = Math.min(minDepth, depth);
+
+    ndc.copy(corner).project(camera);
+    minX = Math.min(minX, ndc.x); maxX = Math.max(maxX, ndc.x);
+    minY = Math.min(minY, ndc.y); maxY = Math.max(maxY, ndc.y);
+  }
+
+  // place the plane at a fixed view-space depth in front of the nearest
+  // corner - at constant depth-along-forward, the frustum cross-section is
+  // an exact rectangle, so this matches the NDC rect with no distortion.
+  const planeDistance = Math.max(camera.near + 0.05, minDepth - IN_FRONT_GAP.value);
+  const vFov = THREE.MathUtils.degToRad(camera.fov);
+  const visibleHeight = 2 * Math.tan(vFov / 2) * planeDistance;
+  const visibleWidth = visibleHeight * camera.aspect;
+
+  right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  up.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+  forward.setFromMatrixColumn(camera.matrixWorld, 2).normalize().multiplyScalar(-1);
+
+  const offsetX = ((minX + maxX) / 2) * (visibleWidth / 2);
+  const offsetY = ((minY + maxY) / 2) * (visibleHeight / 2);
+
+  center.copy(camera.position)
+    .addScaledVector(forward, planeDistance)
+    .addScaledVector(right, offsetX)
+    .addScaledVector(up, offsetY);
+
+  o.plane.position.copy(center);
+  o.plane.quaternion.copy(camera.quaternion);
+  o.plane.scale.set(((maxX - minX) / 2) * visibleWidth, ((maxY - minY) / 2) * visibleHeight, 1);
+}
+
+// ---------- resize ----------
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  resizeRenderTarget();
+}
+window.addEventListener("resize", onResize);
+resizeRenderTarget();
+
+// ---------- animate ----------
+const clock = new THREE.Clock();
+
+function setPlanesVisible(v) {
+  for (const o of orbits) o.plane.visible = v;
+}
+
+function renderPlain() {
+  setPlanesVisible(false);
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+}
+
+function renderBlurred() {
+  setPlanesVisible(false);
+  renderer.setRenderTarget(renderTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+
+  setPlanesVisible(true);
+  renderer.render(scene, camera);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  controls.update();
+
+  for (const o of orbits) {
+    const a = t * o.speed + o.phase;
+    o.mesh.position.set(Math.cos(a) * o.radius, Math.sin(a * 0.6) * o.height, Math.sin(a) * o.radius);
+    if (o.kind === "plane") {
+      // spins through edge-on to the camera periodically - the degenerate-AABB case.
+      o.mesh.rotation.set(o.tilt, a * 0.5, 0);
+    } else {
+      o.mesh.rotation.set(a * 0.4, a * 0.6, a * 0.2);
+    }
+    updateBlurPlane(o);
+  }
+
+  if (state.blurEnabled) renderBlurred();
+  else renderPlain();
+}
+
+animate();
+
+window.__blurDemo = { scene, camera, renderer, orbits, state };
+</script>
+</body>
+</html>

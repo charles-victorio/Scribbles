@@ -1,0 +1,28 @@
+# Each project needs:
+#   slug         - matches thumbnails/<slug>.webp, writeups/<slug>.md,
+#                  and projects/<slug>/ (if local)
+#   name         - human readable title
+#   description  - one sentence
+#   url          - OPTIONAL. If set, "view project" links here.
+#                  If omitted, it links to projects/<slug>/index.html instead.
+
+[[project]]
+slug = "rotoscope"
+name = "Rotoscope"
+description = "Put interactive 3d graphics inside a live-action video."
+
+[[project]]
+slug = "pov2panel"
+name = "POV 2 Panel"
+description = "Take snapshots of a 3d world and turn them into a comic book."
+
+[[project]]
+slug = "comics_aesthetic"
+name = "Comics Aesthetic"
+description = "A shader to make the iconic aesthetic of comic books."
+
+[[project]]
+slug = "pixelated"
+name = "Pixelated"
+description = "Pixelate objects from the viewer, no matter what angle they look."
+

@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Panel Engine — live 3D + printed snapshots</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<style>
+:root{
+  --paper:#f0e7d8;
+  --paper-2:#e2d7c2;
+  --plate:#1d1917;
+  --ink:#14100f;
+  --red:#e2352b;
+  --blue:#1b57b8;
+  --yellow:#f2b705;
+  --magenta:#d6006e;
+  --cyan:#00a3c4;
+  --rule:rgba(236,228,214,.16);
+  --mono:"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --display:"Anton", Impact, "Arial Black", sans-serif;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--plate);color:var(--paper);font-family:var(--mono);overflow:hidden;-webkit-font-smoothing:antialiased}
+
+#split{display:flex;height:100vh;width:100vw}
+#stage{position:relative;flex:0 0 52%;min-width:220px;overflow:hidden;background:var(--paper)}
+#page{flex:1 1 auto;min-width:220px;position:relative;overflow:hidden;background:var(--plate)}
+#grip{flex:0 0 9px;cursor:col-resize;z-index:20;background:linear-gradient(var(--cyan),var(--magenta),var(--yellow))}
+#grip:hover{filter:brightness(1.25)}
+canvas{display:block;touch-action:none}
+
+/* ---------- stage (light: it's the printable plate) ---------- */
+#shutter{position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0;z-index:5}
+.tag{position:absolute;z-index:6;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;user-select:none;pointer-events:none;color:rgba(20,16,15,.55)}
+#tag-live{top:14px;left:16px;display:flex;align-items:center;gap:8px;color:var(--ink)}
+#reclamp{width:8px;height:8px;border-radius:50%;background:var(--red)}
+#tag-hint{bottom:76px;left:16px}
+
+#hud{
+  position:absolute;left:0;right:0;bottom:0;z-index:8;padding:12px 14px;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  background:linear-gradient(transparent,rgba(240,231,216,.94) 45%);
+}
+.btn{
+  font:inherit;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink);background:transparent;border:1px solid rgba(20,16,15,.3);
+  padding:7px 10px;cursor:pointer;transition:.12s;white-space:nowrap;
+}
+.btn:hover{border-color:var(--ink)}
+.btn:focus-visible{outline:2px solid var(--magenta);outline-offset:2px}
+.btn.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.btn.key{background:var(--red);border-color:var(--red);color:#fff;font-weight:700}
+.btn.key:hover{filter:brightness(1.06)}
+
+#timer{display:flex;align-items:center;gap:8px;margin-left:auto;font-size:9.5px;letter-spacing:.16em;color:rgba(20,16,15,.6);text-transform:uppercase}
+#ring{transform:rotate(-90deg)}
+#ring circle{fill:none;stroke-width:2.5}
+#ring .bg{stroke:rgba(20,16,15,.18)}
+#ring .fg{stroke:var(--blue);stroke-linecap:butt;transition:stroke .18s}
+#ring.hot .fg{stroke:var(--red)}
+
+/* ---------- comic page (dark plate, so the prints pop) ---------- */
+#pagehead{
+  position:absolute;top:0;left:0;right:0;z-index:3;padding:11px 16px 8px;
+  background:linear-gradient(var(--plate) 60%,transparent);
+  display:flex;align-items:center;gap:11px;
+}
+#pagehead h1{font-family:var(--display);font-size:17px;letter-spacing:.01em;text-transform:uppercase;line-height:1}
+#pagehead .sub{font-size:9px;letter-spacing:.2em;text-transform:uppercase;opacity:.45}
+#inkstrip{display:flex;width:44px;height:6px;flex:none}
+#inkstrip i{flex:1}
+#count{margin-left:auto;font-size:9px;letter-spacing:.16em;opacity:.5}
+
+.reg{position:absolute;width:18px;height:18px;pointer-events:none;opacity:.3;z-index:2}
+.reg::before,.reg::after{content:"";position:absolute;background:var(--paper)}
+.reg::before{left:50%;top:0;width:1px;height:100%;transform:translateX(-50%)}
+.reg::after{top:50%;left:0;height:1px;width:100%;transform:translateY(-50%)}
+.reg.tr{top:38px;right:10px}.reg.bl{bottom:10px;left:10px}.reg.br{bottom:10px;right:10px}
+
+#grid{
+  position:absolute;inset:42px 0 0 0;overflow-y:auto;overflow-x:hidden;padding:8px 16px 26px;
+  display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:46px;gap:13px;align-content:start;
+}
+#grid::-webkit-scrollbar{width:7px}
+#grid::-webkit-scrollbar-thumb{background:var(--rule)}
+
+#empty{grid-column:1/-1;margin-top:15vh;text-align:center;padding:0 24px}
+#empty .big{font-family:var(--display);font-size:30px;text-transform:uppercase;line-height:.96}
+#empty p{font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;opacity:.45;margin-top:10px}
+
+.panel{
+  position:relative;overflow:hidden;cursor:pointer;padding:0;
+  border:3px solid var(--ink);background:var(--paper);
+  box-shadow:5px 6px 0 rgba(0,0,0,.5);
+  transform:rotate(var(--r));
+  transition:transform .16s cubic-bezier(.2,.9,.3,1.3),box-shadow .16s,border-color .16s;
+  animation:drop .4s cubic-bezier(.2,.9,.3,1.25) both;
+}
+.panel:hover{transform:rotate(0deg) scale(1.03);box-shadow:8px 9px 0 rgba(0,0,0,.6);z-index:2;border-color:var(--yellow)}
+.panel:focus-visible{outline:3px solid var(--magenta);outline-offset:3px}
+.panel img{width:100%;height:100%;object-fit:cover;display:block}
+.panel.fresh{border-color:var(--red)}
+
+@keyframes drop{
+  0%{opacity:0;transform:rotate(var(--r)) scale(.76) translateY(-12px);filter:brightness(2.6)}
+  55%{opacity:1;filter:brightness(1.35)}
+  100%{opacity:1;transform:rotate(var(--r)) scale(1);filter:brightness(1)}
+}
+
+.panel .stamp{position:absolute;left:0;bottom:0;font-size:8px;letter-spacing:.14em;background:var(--ink);color:var(--paper);padding:3px 6px}
+.panel .cap{
+  position:absolute;top:0;left:0;max-width:84%;
+  font-family:var(--display);font-size:11px;letter-spacing:.03em;text-transform:uppercase;
+  background:var(--yellow);color:var(--ink);padding:4px 7px;
+  border-right:2px solid var(--ink);border-bottom:2px solid var(--ink);
+}
+.panel .sfx{
+  position:absolute;right:6px;top:34%;font-family:var(--display);font-size:23px;text-transform:uppercase;
+  color:var(--yellow);-webkit-text-stroke:2.5px var(--ink);transform:rotate(-8deg);
+  pointer-events:none;text-shadow:3px 3px 0 rgba(20,16,15,.6);
+}
+
+.s0{grid-column:span 4;grid-row:span 4}
+.s1{grid-column:span 2;grid-row:span 4}
+.s2{grid-column:span 2;grid-row:span 3}
+.s3{grid-column:span 4;grid-row:span 3}
+.s4{grid-column:span 3;grid-row:span 3}
+.s5{grid-column:span 3;grid-row:span 3}
+.s6{grid-column:span 6;grid-row:span 3}
+.s7{grid-column:span 2;grid-row:span 3}
+.s8{grid-column:span 4;grid-row:span 3}
+
+@media (max-width:860px){
+  #split{flex-direction:column}
+  #stage{flex:0 0 52%!important;width:100%!important}
+  #page{width:100%!important}
+  #grip{flex:0 0 8px;cursor:row-resize;width:100%}
+  #grid{grid-template-columns:repeat(4,1fr)}
+  .s0,.s3,.s6,.s8{grid-column:span 4}
+  .s1,.s2,.s4,.s5,.s7{grid-column:span 2}
+  .reg{display:none}
+}
+@media (prefers-reduced-motion:reduce){ .panel{animation:none;transition:none} }
+</style>
+</head>
+<body>
+
+<div id="split">
+  <div id="stage">
+    <div id="shutter"></div>
+    <div class="tag" id="tag-live"><span id="reclamp"></span><span>Live plate · drag to orbit</span></div>
+    <div class="tag" id="tag-hint">Ghost frames mark past camera frustums</div>
+
+    <div id="hud">
+      <button class="btn key" id="b-shot">Take panel</button>
+      <button class="btn on" id="b-auto">Auto</button>
+      <button class="btn on" id="b-ghost">Ghosts</button>
+      <button class="btn" id="b-press">Press view</button>
+      <button class="btn" id="b-clear">Clear page</button>
+      <div id="timer">
+        <svg id="ring" width="24" height="24" viewBox="0 0 24 24">
+          <circle class="bg" cx="12" cy="12" r="9.5"></circle>
+          <circle class="fg" cx="12" cy="12" r="9.5" stroke-dasharray="59.69" stroke-dashoffset="0"></circle>
+        </svg>
+        <span id="tnext">next</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="grip" role="separator" aria-label="Resize views"></div>
+
+  <div id="page">
+    <div id="pagehead">
+      <div id="inkstrip">
+        <i style="background:var(--cyan)"></i><i style="background:var(--magenta)"></i>
+        <i style="background:var(--yellow)"></i><i style="background:var(--ink)"></i>
+      </div>
+      <h1>Printed frames</h1>
+      <span id="count">time ↓ · 0 / 9</span>
+    </div>
+    <div class="reg tr"></div><div class="reg bl"></div><div class="reg br"></div>
+    <div id="grid">
+      <div id="empty">
+        <div class="big">Nothing<br>on the page yet</div>
+        <p>First frame prints in a few seconds</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* =========================================================
+   CONFIG
+   Capture size is deliberately close to the size a panel is
+   drawn at. Resampling a dot screen is what turns it to mush.
+========================================================= */
+const CFG = { capW: 512, capH: 384, maxPanels: 9, interval: 4.0, ghostDist: 2.6, ghostLayer: 1 };
+const CAP_ASPECT = CFG.capW / CFG.capH;
+
+const PRESS = {
+  print:  { dotPitch: 7.0, thick: 1.9, misreg: 2.2, halftone: 0.90, edge: 1.10, grain: 0.40 },
+  screen: { dotPitch: 5.0, thick: 1.5, misreg: 2.0, halftone: 0.85, edge: 1.00, grain: 0.35 },
+};
+
+const INK = {
+  red:'#e2352b', blue:'#1b57b8', yellow:'#f2b705', cream:'#efe6d6',
+  navy:'#20304d', teal:'#0f8fa3', magenta:'#d6006e',
+};
+
+/* =========================================================
+   RENDERER
+========================================================= */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#f0e7d8');   // paper. no fog — fog is a gradient, and flats print better.
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 80);
+camera.position.set(7.6, 4.4, 9.2);
+camera.layers.enable(CFG.ghostLayer);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 5;
+controls.maxDistance = 40;
+controls.target.set(0, 1.2, 0);
+
+/* =========================================================
+   BANDED SHADING
+========================================================= */
+function rampTexture(steps) {
+  const tex = new THREE.DataTexture(new Uint8Array(steps), steps.length, 1, THREE.RedFormat);
+  tex.minFilter = tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+const ramp = rampTexture([70, 165, 255]);
+const toon = hex => new THREE.MeshToonMaterial({ color: new THREE.Color(hex), gradientMap: ramp });
+
+/* =========================================================
+   WORLD — few shapes, large in frame, on a big pale field
+========================================================= */
+const world = new THREE.Group();
+scene.add(world);
+
+const ground = new THREE.Mesh(new THREE.CylinderGeometry(7.6, 7.6, 0.5, 8), toon(INK.cream));
+ground.position.y = -0.9;
+world.add(ground);
+
+// the core the subject orbits
+const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 1), toon(INK.blue));
+core.position.y = 1.5;
+world.add(core);
+
+const cage = new THREE.Group();
+cage.position.y = 1.5;
+for (let i = 0; i < 2; i++) {
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.25, 0.075, 6, 40), toon(INK.navy));
+  ring.rotation.set(i * 1.1, i * 0.8, 0.3);
+  cage.add(ring);
+}
+world.add(cage);
+
+// the orbit path
+const ORBIT_R = 4.6;
+const path = new THREE.Mesh(new THREE.TorusGeometry(ORBIT_R, 0.045, 6, 120), toon(INK.navy));
+path.rotation.x = Math.PI / 2;
+path.position.y = 1.5;
+world.add(path);
+
+// the subject
+const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 2.5, 26), toon(INK.red));
+world.add(cylinder);
+const bandRing = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.11, 8, 26), toon(INK.yellow));
+bandRing.rotation.x = Math.PI / 2;
+cylinder.add(bandRing);
+const nose = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.75, 26), toon(INK.cream));
+nose.position.y = 1.6;
+cylinder.add(nose);
+
+// floating background objects — chunky, few, close enough to read
+const debris = [];
+const shapes = [
+  new THREE.BoxGeometry(0.95, 0.95, 0.95),
+  new THREE.OctahedronGeometry(0.72),
+  new THREE.IcosahedronGeometry(0.68),
+  new THREE.ConeGeometry(0.6, 1.35, 5),
+  new THREE.TorusGeometry(0.6, 0.24, 10, 18),
+  new THREE.TetrahedronGeometry(0.85),
+];
+const palette = [INK.blue, INK.yellow, INK.teal, INK.navy, INK.magenta, INK.cream];
+for (let i = 0; i < 11; i++) {
+  const m = new THREE.Mesh(shapes[i % shapes.length], toon(palette[i % palette.length]));
+  m.userData = {
+    radius: 5.8 + (i % 3) * 1.1,
+    speed: 0.16 + (i % 4) * 0.07,
+    phase: (i / 11) * Math.PI * 2,
+    height: 0.3 + (i % 5) * 0.85,
+    tumble: 0.3 + i * 0.11,
+  };
+  m.scale.setScalar(0.85 + (i % 4) * 0.28);
+  world.add(m);
+  debris.push(m);
+}
+
+// pillars at the rim — vertical structure for the outlines to bite on
+const pillars = new THREE.Group();
+for (let i = 0; i < 6; i++) {
+  const h = 1.3 + (i % 3) * 1.5;
+  const p = new THREE.Mesh(new THREE.BoxGeometry(0.6, h, 0.6), toon(i % 2 ? INK.navy : INK.cream));
+  const a = (i / 6) * Math.PI * 2 + 0.4;
+  p.position.set(Math.cos(a) * 6.6, h / 2 - 0.65, Math.sin(a) * 6.6);
+  p.rotation.y = a;
+  pillars.add(p);
+}
+world.add(pillars);
+
+// one key, one rim, ambient. Point lights add smooth falloff that fights the banding.
+scene.add(new THREE.AmbientLight('#ffffff', 0.55));
+const key = new THREE.DirectionalLight('#ffffff', 2.6); key.position.set(5, 8, 4); scene.add(key);
+const rim = new THREE.DirectionalLight('#7fb2ff', 1.1); rim.position.set(-6, 2, -5); scene.add(rim);
+
+/* =========================================================
+   G-BUFFER + PRESS
+========================================================= */
+const normalMat = new THREE.MeshNormalMaterial();
+const ghostGroup = new THREE.Group();
+scene.add(ghostGroup);
+const ghosts = [];
+
+function makeGBuffer(w, h) {
+  const color = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  color.texture.colorSpace = THREE.SRGBColorSpace;
+  const depth = new THREE.DepthTexture(w, h);
+  depth.type = THREE.UnsignedIntType;
+  const normal = new THREE.WebGLRenderTarget(w, h, {
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthTexture: depth,
+  });
+  return { color, normal, depth, w, h };
+}
+const capGB = makeGBuffer(CFG.capW, CFG.capH);
+let screenGB = null;
+
+const fsScene = new THREE.Scene();
+const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const U = {
+  tColor: { value: null }, tNormal: { value: null }, tDepth: { value: null },
+  uRes: { value: new THREE.Vector2() }, uDpr: { value: 1 },
+  uNear: { value: camera.near }, uFar: { value: camera.far },
+  uHalftone: { value: .9 }, uDotPitch: { value: 7 },
+  uEdge: { value: 1.1 }, uThick: { value: 1.9 },
+  uMisreg: { value: 2.2 }, uGrain: { value: .4 },
+  uBoil: { value: 0 }, uSeed: { value: 0 },
+};
+
+const pressMat = new THREE.ShaderMaterial({
+  uniforms: U, depthTest: false, depthWrite: false,
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+  `,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D tColor, tNormal, tDepth;
+    uniform vec2  uRes;
+    uniform float uDpr, uNear, uFar;
+    uniform float uHalftone, uDotPitch, uEdge, uThick, uMisreg, uGrain, uBoil, uSeed;
+
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+
+    float linDepth(vec2 uv){
+      float d = texture2D(tDepth, uv).x;
+      float z = d * 2.0 - 1.0;
+      float v = (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
+      return clamp(v / uFar, 0.0, 1.0);
+    }
+
+    mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+
+    // One ink plate. Coverage grows as sqrt(amount) so mid-tones read right.
+    float plate(float amount, vec2 px, float angle, float pitch){
+      vec2 p = rot(angle) * px;
+      vec2 cell = mod(p, pitch) - pitch * 0.5;
+      float r = sqrt(clamp(amount, 0.0, 1.0)) * pitch * 0.62;
+      return smoothstep(r + 0.7, r - 0.7, length(cell));
+    }
+
+    void main(){
+      vec2 texel = 1.0 / uRes;
+
+      // --- line boil: jitter that only changes on twos ---
+      vec2 boil = (vec2(hash(vec2(uBoil, 3.7)), hash(vec2(uBoil, 9.1))) - 0.5) * 1.6 * texel * uDpr;
+      vec2 uv = vUv + boil;
+      float dC = linDepth(uv);
+
+      // --- misregistration: plates drift apart away from the focal depth ---
+      float defocus = clamp(abs(dC - linDepth(vec2(0.5))) * 6.0, 0.0, 1.0);
+      vec2 off = vec2(uMisreg * (0.25 + defocus), 0.0) * texel * uDpr;
+      vec3 col = vec3(
+        texture2D(tColor, vUv + off).r,
+        texture2D(tColor, vUv).g,
+        texture2D(tColor, vUv - off).b
+      );
+
+      // --- outlines: sobel over linear depth AND view normals ---
+      vec2 s = texel * uThick * uDpr;
+      float dE = 0.0, nE = 0.0;
+      vec3 nC = normalize(texture2D(tNormal, uv).rgb * 2.0 - 1.0);
+      for (int i = 0; i < 4; i++){
+        vec2 dir = i == 0 ? vec2(1.0, 0.0) : i == 1 ? vec2(-1.0, 0.0)
+                 : i == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0);
+        dE += abs(linDepth(uv + dir * s) - dC);
+        vec3 nS = normalize(texture2D(tNormal, uv + dir * s).rgb * 2.0 - 1.0);
+        nE += 1.0 - max(dot(nC, nS), 0.0);
+      }
+      float edge = clamp(dE * 70.0 + nE * 0.9, 0.0, 1.0);
+      edge = smoothstep(0.35, 0.75, edge) * uEdge;
+
+      // --- halftone: C/M/Y at 15deg / 75deg / 0deg -> rosette ---
+      vec2 px = gl_FragCoord.xy / uDpr;
+      vec3 ht = vec3(
+        1.0 - plate(1.0 - col.r, px, 0.2618, uDotPitch),
+        1.0 - plate(1.0 - col.g, px, 1.3090, uDotPitch),
+        1.0 - plate(1.0 - col.b, px, 0.0,    uDotPitch)
+      );
+      col = mix(col, ht, uHalftone);
+
+      // --- ink the lines last so the halftone never eats them ---
+      col = mix(col, vec3(0.055, 0.045, 0.04), clamp(edge, 0.0, 1.0));
+
+      // --- paper tooth ---
+      float g = hash(floor(gl_FragCoord.xy / max(uDpr * 0.75, 1.0)) + uSeed);
+      col *= 1.0 - uGrain * 0.22 * g;
+      col = mix(col, col * vec3(1.02, 0.995, 0.95), uGrain);
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+});
+const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), pressMat);
+fsQuad.frustumCulled = false;
+fsScene.add(fsQuad);
+
+function loadPress(gb, cfg, dpr, boil, seed) {
+  U.tColor.value = gb.color.texture;
+  U.tNormal.value = gb.normal.texture;
+  U.tDepth.value = gb.depth;
+  U.uRes.value.set(gb.w, gb.h);
+  U.uDpr.value = dpr;
+  U.uDotPitch.value = cfg.dotPitch;
+  U.uThick.value = cfg.thick;
+  U.uMisreg.value = cfg.misreg;
+  U.uHalftone.value = cfg.halftone;
+  U.uEdge.value = cfg.edge;
+  U.uGrain.value = cfg.grain;
+  U.uBoil.value = boil;
+  U.uSeed.value = seed;
+}
+
+function renderGBuffer(gb, cam) {
+  ghostGroup.visible = false;              // ghosts must not cast silhouettes into the normal buffer
+  scene.overrideMaterial = normalMat;
+  renderer.setRenderTarget(gb.normal);
+  renderer.clear();
+  renderer.render(scene, cam);
+
+  scene.overrideMaterial = null;
+  ghostGroup.visible = ghostsOn;
+  renderer.setRenderTarget(gb.color);
+  renderer.render(scene, cam);
+}
+
+/* =========================================================
+   GHOST FRUSTUMS
+========================================================= */
+function setLayerDeep(o, l) { o.layers.set(l); o.children.forEach(c => setLayerDeep(c, l)); }
+
+function makeGhost(cam, texture) {
+  const d = CFG.ghostDist;
+  const h = 2 * d * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+  const w = h * CAP_ASPECT;
+
+  const g = new THREE.Group();
+  g.position.copy(cam.position);
+  g.quaternion.copy(cam.quaternion);
+
+  const frameMat = new THREE.MeshBasicMaterial({
+    map: texture, transparent: true, opacity: .45, side: THREE.DoubleSide,
+    depthWrite: false, toneMapped: false,
+  });
+  const frame = new THREE.Mesh(new THREE.PlaneGeometry(w, h), frameMat);
+  frame.position.z = -d; frame.renderOrder = 3;
+  g.add(frame);
+
+  // on paper, a blowout reads better than white-on-white
+  const flashMat = new THREE.MeshBasicMaterial({
+    color: 0xfff0a8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
+  const flash = new THREE.Mesh(new THREE.PlaneGeometry(w, h), flashMat);
+  flash.position.z = -d + .004; flash.renderOrder = 4;
+  g.add(flash);
+
+  const bx = w / 2, by = h / 2;
+  const borderMat = new THREE.LineBasicMaterial({ color: 0x14100f, transparent: true, opacity: .75 });
+  const border = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-bx, -by, -d), new THREE.Vector3(bx, -by, -d),
+    new THREE.Vector3(bx, by, -d), new THREE.Vector3(-bx, by, -d),
+  ]), borderMat);
+  border.renderOrder = 5;
+  g.add(border);
+
+  const pts = [];
+  [[-bx, -by], [bx, -by], [bx, by], [-bx, by]].forEach(([x, y]) => {
+    pts.push(new THREE.Vector3(0, 0, 0), new THREE.Vector3(x, y, -d));
+  });
+  const coneMat = new THREE.LineBasicMaterial({ color: 0xd6006e, transparent: true, opacity: .4 });
+  g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), coneMat));
+
+  const apexMat = new THREE.MeshBasicMaterial({ color: 0xd6006e, transparent: true, opacity: .85 });
+  g.add(new THREE.Mesh(new THREE.OctahedronGeometry(.13), apexMat));
+
+  setLayerDeep(g, CFG.ghostLayer);
+
+  g.userData = {
+    flash: 1.6, pulse: 0, hover: 0, hoverTarget: 0,
+    mats: { frameMat, flashMat, borderMat, coneMat, apexMat },
+    forward: new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion),
+    apexPos: cam.position.clone(),
+  };
+  return g;
+}
+
+const cInk = new THREE.Color(0x14100f), cRed = new THREE.Color(0xe2352b), cYel = new THREE.Color(0xf2b705);
+
+function updateGhosts(dt) {
+  for (let i = 0; i < ghosts.length; i++) {
+    const g = ghosts[i], u = g.userData, newest = i === ghosts.length - 1;
+    u.flash = Math.max(0, u.flash - dt * 2.4);
+    u.pulse = Math.max(0, u.pulse - dt * 1.9);
+    u.hover += (u.hoverTarget - u.hover) * Math.min(1, dt * 12);
+
+    const lift = u.flash * .9 + u.pulse * .35 + u.hover * .55 + arm * .16;
+
+    u.mats.frameMat.opacity = Math.min(1, (newest ? .58 : .42) + lift * .4);
+    u.mats.flashMat.opacity = Math.min(1, u.flash * .8 + u.pulse * .2 + u.hover * .12);
+    u.mats.borderMat.opacity = Math.min(1, .6 + lift * .5);
+    u.mats.borderMat.color.lerpColors(newest ? cRed : cInk, cYel, u.hover);
+    u.mats.coneMat.opacity = Math.min(1, .28 + lift * .6);
+    u.mats.apexMat.opacity = Math.min(1, .7 + lift);
+    g.scale.setScalar(1 + u.flash * .07 + u.hover * .05);
+  }
+}
+
+/* =========================================================
+   CAPTURE
+========================================================= */
+const snapCam = new THREE.PerspectiveCamera(camera.fov, CAP_ASPECT, camera.near, camera.far);
+snapCam.layers.set(0);
+
+const readBuf = new Uint8Array(CFG.capW * CFG.capH * 4);
+const flipCanvas = document.createElement('canvas');
+flipCanvas.width = CFG.capW; flipCanvas.height = CFG.capH;
+const flipCtx = flipCanvas.getContext('2d');
+
+let elapsed = 0;
+
+function capture() {
+  snapCam.position.copy(camera.position);
+  snapCam.quaternion.copy(camera.quaternion);
+  snapCam.fov = camera.fov;
+  snapCam.updateProjectionMatrix();
+
+  renderGBuffer(capGB, snapCam);
+
+  const rtPrint = new THREE.WebGLRenderTarget(CFG.capW, CFG.capH, {
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+  });
+  rtPrint.texture.colorSpace = THREE.SRGBColorSpace;
+
+  U.uNear.value = snapCam.near;
+  U.uFar.value = snapCam.far;
+  loadPress(capGB, PRESS.print, 1, Math.random() * 500, Math.random() * 500);
+
+  renderer.setRenderTarget(rtPrint);
+  renderer.render(fsScene, fsCam);
+  renderer.readRenderTargetPixels(rtPrint, 0, 0, CFG.capW, CFG.capH, readBuf);
+  renderer.setRenderTarget(null);
+
+  const img = flipCtx.createImageData(CFG.capW, CFG.capH);
+  const row = CFG.capW * 4;
+  for (let y = 0; y < CFG.capH; y++) {
+    const src = (CFG.capH - 1 - y) * row;
+    img.data.set(readBuf.subarray(src, src + row), y * row);
+  }
+  flipCtx.putImageData(img, 0, 0);
+
+  const ghost = makeGhost(snapCam, rtPrint.texture);
+  ghost.userData.rt = rtPrint;
+  ghostGroup.add(ghost);
+  ghosts.push(ghost);
+  ghosts.forEach(g => { g.userData.pulse = 1; });
+
+  addPanel(flipCanvas.toDataURL('image/png'), ghost, elapsed);
+  while (ghosts.length > CFG.maxPanels) retire(ghosts.shift());
+
+  flashScreen();
+  nextAt = elapsed + CFG.interval;
+}
+
+function retire(g) {
+  ghostGroup.remove(g);
+  g.userData.rt.dispose();
+  Object.values(g.userData.mats).forEach(m => m.dispose());
+  g.traverse(o => o.geometry && o.geometry.dispose());
+}
+
+/* =========================================================
+   THE PAGE
+========================================================= */
+const gridEl = document.getElementById('grid');
+const emptyEl = document.getElementById('empty');
+const countEl = document.getElementById('count');
+
+const CAPTIONS = ['MEANWHILE…', 'ONE BEAT LATER…', 'THE ORBIT CONTINUES…',
+                  'FROM A NEW ANGLE…', 'AND THEN…', 'A MOMENT PASSES…', 'HOLD ON THIS…'];
+const SFX = ['FLASH!', 'SNAP!', 'KRAKK!', 'WHOOSH!', 'ZAP!', 'FWOOM!', 'SHINK!', 'BWAM!'];
+let shotNo = 0;
+const setCount = () =>
+  countEl.textContent = `time ↓ · ${gridEl.querySelectorAll('.panel').length} / ${CFG.maxPanels}`;
+
+function addPanel(url, ghost, t) {
+  emptyEl.style.display = 'none';
+  shotNo++;
+
+  const el = document.createElement('button');
+  el.className = `panel s${shotNo % 9} fresh`;
+  el.style.setProperty('--r', `${(Math.random() * 2.6 - 1.3).toFixed(2)}deg`);
+  el.setAttribute('aria-label', `Frame ${shotNo}. Return the camera to this viewpoint.`);
+
+  const im = document.createElement('img');
+  im.src = url; im.alt = `Printed frame ${shotNo}`;
+  el.appendChild(im);
+
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  cap.textContent = shotNo === 1 ? 'FIRST FRAME.' : CAPTIONS[shotNo % CAPTIONS.length];
+  el.appendChild(cap);
+
+  if (Math.random() < .45) {
+    const sfx = document.createElement('div');
+    sfx.className = 'sfx';
+    sfx.textContent = SFX[Math.floor(Math.random() * SFX.length)];
+    el.appendChild(sfx);
+  }
+
+  const stamp = document.createElement('div');
+  stamp.className = 'stamp';
+  stamp.textContent = `#${String(shotNo).padStart(3, '0')} · T+${t.toFixed(1)}s`;
+  el.appendChild(stamp);
+
+  el.addEventListener('pointerenter', () => ghost.userData.hoverTarget = 1);
+  el.addEventListener('pointerleave', () => ghost.userData.hoverTarget = 0);
+  el.addEventListener('focus', () => ghost.userData.hoverTarget = 1);
+  el.addEventListener('blur', () => ghost.userData.hoverTarget = 0);
+  el.addEventListener('click', () => flyTo(ghost));
+
+  gridEl.querySelectorAll('.panel.fresh').forEach(p => p.classList.remove('fresh'));
+  gridEl.appendChild(el);                       // later in time = further down the page
+
+  while (gridEl.querySelectorAll('.panel').length > CFG.maxPanels) {
+    gridEl.querySelector('.panel').remove();     // the oldest falls off the top
+  }
+  gridEl.scrollTo({ top: gridEl.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' });
+  setCount();
+}
+
+function clearPage() {
+  gridEl.querySelectorAll('.panel').forEach(p => p.remove());
+  while (ghosts.length) retire(ghosts.shift());
+  shotNo = 0;
+  emptyEl.style.display = '';
+  setCount();
+}
+
+/* =========================================================
+   FLY BACK TO A RECORDED VIEWPOINT
+========================================================= */
+let fly = null;
+function flyTo(ghost) {
+  const tgt = ghost.userData.apexPos.clone()
+    .add(ghost.userData.forward.clone().multiplyScalar(CFG.ghostDist + 4));
+  if (reduceMotion) { camera.position.copy(ghost.userData.apexPos); controls.target.copy(tgt); return; }
+  fly = { t: 0, fromPos: camera.position.clone(), toPos: ghost.userData.apexPos.clone(),
+          fromTgt: controls.target.clone(), toTgt: tgt };
+}
+function updateFly(dt) {
+  if (!fly) return;
+  fly.t = Math.min(1, fly.t + dt / .9);
+  const k = 1 - Math.pow(1 - fly.t, 3);
+  camera.position.lerpVectors(fly.fromPos, fly.toPos, k);
+  controls.target.lerpVectors(fly.fromTgt, fly.toTgt, k);
+  if (fly.t >= 1) fly = null;
+}
+
+/* =========================================================
+   HUD
+========================================================= */
+const shutterEl = document.getElementById('shutter');
+const ringFg = document.querySelector('#ring .fg');
+const ringEl = document.getElementById('ring');
+const tnextEl = document.getElementById('tnext');
+const RING_LEN = 59.69;
+
+let autoOn = true, ghostsOn = true, pressOn = false;
+let nextAt = CFG.interval, arm = 0;
+
+function flashScreen() {
+  shutterEl.style.transition = 'none';
+  shutterEl.style.opacity = '.9';
+  requestAnimationFrame(() => {
+    shutterEl.style.transition = 'opacity .45s ease-out';
+    shutterEl.style.opacity = '0';
+  });
+}
+
+document.getElementById('b-shot').onclick = capture;
+document.getElementById('b-auto').onclick = e => {
+  autoOn = !autoOn;
+  e.currentTarget.classList.toggle('on', autoOn);
+  if (autoOn) nextAt = elapsed + CFG.interval;
+};
+document.getElementById('b-ghost').onclick = e => {
+  ghostsOn = !ghostsOn;
+  ghostGroup.visible = ghostsOn;
+  e.currentTarget.classList.toggle('on', ghostsOn);
+};
+document.getElementById('b-press').onclick = e => {
+  pressOn = !pressOn;
+  e.currentTarget.classList.toggle('on', pressOn);
+  if (pressOn && !screenGB) resize();
+};
+document.getElementById('b-clear').onclick = clearPage;
+
+addEventListener('keydown', e => {
+  if (e.code === 'Space' && !/^(INPUT|BUTTON)$/.test(document.activeElement.tagName)) {
+    e.preventDefault(); capture();
+  }
+  if (e.key === 'g') document.getElementById('b-ghost').click();
+  if (e.key === 'p') document.getElementById('b-press').click();
+});
+
+/* =========================================================
+   SPLIT + RESIZE
+========================================================= */
+const grip = document.getElementById('grip');
+let dragging = false;
+grip.addEventListener('pointerdown', e => { dragging = true; grip.setPointerCapture(e.pointerId); });
+grip.addEventListener('pointerup', e => { dragging = false; grip.releasePointerCapture(e.pointerId); });
+grip.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const pct = innerWidth <= 860
+    ? THREE.MathUtils.clamp(e.clientY / innerHeight * 100, 25, 80)
+    : THREE.MathUtils.clamp(e.clientX / innerWidth * 100, 20, 80);
+  stage.style.flex = `0 0 ${pct}%`;
+  resize();
+});
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const dpr = Math.min(devicePixelRatio, 2);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+
+  const pw = Math.max(2, Math.floor(w * dpr)), ph = Math.max(2, Math.floor(h * dpr));
+  if (screenGB) { screenGB.color.dispose(); screenGB.normal.dispose(); }
+  screenGB = makeGBuffer(pw, ph);
+}
+addEventListener('resize', resize);
+
+/* =========================================================
+   LOOP
+========================================================= */
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), .05);
+  elapsed += dt;
+
+  const a = elapsed * .5;
+  cylinder.position.set(Math.cos(a) * ORBIT_R, 1.5 + Math.sin(a * 2) * .35, Math.sin(a) * ORBIT_R);
+  cylinder.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0), new THREE.Vector3(-Math.sin(a), 0, Math.cos(a))
+  );
+  cylinder.rotateY(elapsed * 2.2);
+
+  core.rotation.set(elapsed * .13, elapsed * .25, 0);
+  cage.rotation.y -= dt * .18;
+  pillars.rotation.y = elapsed * .04;
+
+  for (const m of debris) {
+    const u = m.userData;
+    const ang = u.phase + elapsed * u.speed;
+    m.position.set(Math.cos(ang) * u.radius, u.height + Math.sin(elapsed * .7 + u.phase) * .55, Math.sin(ang) * u.radius);
+    m.rotation.set(elapsed * u.tumble, elapsed * u.tumble * .7, 0);
+  }
+
+  const remain = Math.max(0, nextAt - elapsed);
+  if (autoOn) {
+    arm = 1 - THREE.MathUtils.clamp(remain / .7, 0, 1);
+    ringFg.style.strokeDashoffset = RING_LEN * (1 - remain / CFG.interval);
+    ringEl.classList.toggle('hot', remain < .7);
+    tnextEl.textContent = remain.toFixed(1) + 's';
+  } else {
+    arm = 0;
+    ringFg.style.strokeDashoffset = RING_LEN;
+    ringEl.classList.remove('hot');
+    tnextEl.textContent = 'paused';
+  }
+
+  updateGhosts(dt);
+  updateFly(dt);
+  controls.update();
+
+  if (pressOn && screenGB) {
+    renderGBuffer(screenGB, camera);
+    U.uNear.value = camera.near;
+    U.uFar.value = camera.far;
+    const frame = Math.floor(elapsed * 12);   // boil on twos
+    loadPress(screenGB, PRESS.screen, Math.min(devicePixelRatio, 2), frame, frame * .017);
+    renderer.setRenderTarget(null);
+    renderer.render(fsScene, fsCam);
+  } else {
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+  }
+
+  if (autoOn && elapsed >= nextAt) capture();
+}
+
+resize();
+animate();
+</script>
+</body>
+</html>

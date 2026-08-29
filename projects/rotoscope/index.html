@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Occlusion Demo — real video + matte</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0d0221; }
+  #container { width: 100vw; height: 100vh; position: relative; }
+  #info {
+    position: absolute; top: 16px; left: 16px; max-width: 320px;
+    color: #eae6f5; background: rgba(13, 2, 33, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 12px 16px; border-radius: 8px;
+    font-family: 'Courier New', monospace; font-size: 12.5px; line-height: 1.55;
+    backdrop-filter: blur(4px);
+  }
+  #info b { color: #6ee7f5; }
+  #info span { color: #f5a3d0; }
+  #startOverlay {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(13, 2, 33, 0.85); color: #eae6f5; font-family: 'Courier New', monospace;
+    font-size: 16px; cursor: pointer; z-index: 10; text-align: center; flex-direction: column; gap: 10px;
+  }
+  #startOverlay .btn {
+    padding: 10px 22px; border: 1px solid #6ee7f5; border-radius: 6px; color: #6ee7f5;
+  }
+  #startOverlay.hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="startOverlay"><div>click to start</div><div class="btn">▶ play video composite</div></div>
+</div>
+
+<!-- Hidden video element — see the ffmpeg vstack command in the reply for how to build this file. -->
+<video id="sourceVideo" src="clip_stacked.mp4" muted playsinline loop style="display:none"></video>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+<script>
+(function () {
+  // ---------- EDIT THIS ----------
+  const SOURCE_VIDEO = 'clip_stacked.mp4'; // color on top half, matte on bottom half — see ffmpeg command in chat
+  // --------------------------------
+
+  const container = document.getElementById('container');
+  const startOverlay = document.getElementById('startOverlay');
+  const sourceVideo = document.getElementById('sourceVideo');
+  sourceVideo.src = SOURCE_VIDEO;
+
+  // ---------- renderer / scene / camera ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d0221); // fallback color until the video backdrop loads
+
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 2.6, 9.5);
+  camera.lookAt(0, 2.1, 0);
+
+  // ---------- lighting ----------
+  scene.add(new THREE.AmbientLight(0x554477, 0.9));
+  const key = new THREE.DirectionalLight(0xff6ec7, 1.1);
+  key.position.set(4, 6, 5);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x4dd8ff, 0.8);
+  rim.position.set(-5, 3, -4);
+  scene.add(rim);
+
+  // ---------- video -> two canvases, one decode ----------
+  // The color half and matte half are drawn from the SAME video element each frame
+  // (different source rects), so they can never be one frame apart from each other —
+  // there's only one decoded frame to read from, period. This also sidesteps a real
+  // browser gotcha: alpha-channel video is decoded with PREMULTIPLIED alpha, which
+  // crushes RGB toward black wherever alpha is low — that's what made the background
+  // render black in the previous version. Plain (non-alpha) video has no such issue.
+  let compW = 0, compH = 0, fullH = 0;
+  let bgCanvas, bgCtx, bgTexture, backgroundPlane;
+  let personCanvas, personCtx, matteCanvas, matteCtx, personTexture, personPlane;
+  let ready = false;
+
+  function setupPlanes() {
+    const fullW = sourceVideo.videoWidth;
+    fullH = sourceVideo.videoHeight;
+    compW = fullW;
+    compH = fullH / 2; // top half = color, bottom half = matte
+
+    bgCanvas = document.createElement('canvas');
+    bgCanvas.width = compW; bgCanvas.height = compH;
+    bgCtx = bgCanvas.getContext('2d');
+    bgTexture = new THREE.CanvasTexture(bgCanvas);
+
+    personCanvas = document.createElement('canvas');
+    personCanvas.width = compW; personCanvas.height = compH;
+    personCtx = personCanvas.getContext('2d', { willReadFrequently: true });
+    personTexture = new THREE.CanvasTexture(personCanvas);
+
+    matteCanvas = document.createElement('canvas'); // scratch buffer, never shown directly
+    matteCanvas.width = compW; matteCanvas.height = compH;
+    matteCtx = matteCanvas.getContext('2d', { willReadFrequently: true });
+
+    const aspect = compW / compH;
+    const planeH = 4.6;
+    const planeW = planeH * aspect;
+    const geo = new THREE.PlaneGeometry(planeW, planeH);
+
+    const bgMat = new THREE.MeshBasicMaterial({
+      map: bgTexture,
+      depthWrite: false,
+      depthTest: false
+    });
+    backgroundPlane = new THREE.Mesh(geo, bgMat);
+    backgroundPlane.renderOrder = -1; // draw first, never fights the depth buffer
+    backgroundPlane.position.set(0, planeH / 2, -0.02); // tiny z offset, avoids z-fighting
+    scene.add(backgroundPlane);
+
+    const personMat = new THREE.MeshBasicMaterial({
+      map: personTexture,
+      transparent: true,
+      alphaTest: 0.05,
+      side: THREE.DoubleSide
+    });
+    personPlane = new THREE.Mesh(geo, personMat);
+    personPlane.position.set(0, planeH / 2, 0); // feet on the floor, z = 0
+    scene.add(personPlane);
+
+    ready = true;
+  }
+
+  function compositeFrame() {
+    // background: just the color half, straight copy, no per-pixel work needed
+    bgCtx.drawImage(sourceVideo, 0, 0, compW, compH, 0, 0, compW, compH);
+    bgTexture.needsUpdate = true;
+
+    // person: color half again (separate canvas) + matte half's luminance as alpha
+    personCtx.drawImage(sourceVideo, 0, 0, compW, compH, 0, 0, compW, compH);
+    const colorData = personCtx.getImageData(0, 0, compW, compH);
+
+    matteCtx.drawImage(sourceVideo, 0, compH, compW, compH, 0, 0, compW, compH);
+    const matteData = matteCtx.getImageData(0, 0, compW, compH);
+
+    const cd = colorData.data, md = matteData.data;
+    for (let i = 0; i < cd.length; i += 4) {
+      cd[i + 3] = 0.299 * md[i] + 0.587 * md[i + 1] + 0.114 * md[i + 2];
+    }
+    personCtx.putImageData(colorData, 0, 0);
+    personTexture.needsUpdate = true;
+  }
+
+  sourceVideo.addEventListener('loadeddata', setupPlanes, { once: true });
+  sourceVideo.addEventListener('error', () => console.error('Could not load', SOURCE_VIDEO));
+
+  startOverlay.addEventListener('click', () => {
+    startOverlay.classList.add('hidden');
+    sourceVideo.play();
+  });
+
+  // ---------- orbiting cubes (spawn/despawn with a pop animation) ----------
+  const cubeColors = [0x22d3ee, 0xff6ec7, 0xffd36e, 0x7b2fbf, 0x8fff6e];
+  const cubes = [];
+  const POP_DURATION = 0.35; // seconds
+  let spawnIndex = 0;
+
+  function easeOutBack(x) {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+  }
+  function easeInBack(x) {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return c3 * x * x * x - c1 * x * x;
+  }
+
+  function spawnCube() {
+    const size = 0.4 + Math.random() * 0.35;
+    const color = cubeColors[spawnIndex % cubeColors.length];
+    spawnIndex++;
+    const mat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 0.35, roughness: 0.4, metalness: 0.2
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), mat);
+    mesh.scale.setScalar(0);
+    scene.add(mesh);
+    cubes.push({
+      mesh,
+      radius: 2.6 + Math.random() * 1.8,
+      speed: 0.35 + Math.random() * 0.35,
+      phase: Math.random() * Math.PI * 2,
+      yOffset: 0.8 + Math.random() * 3.2,
+      spin: 0.6 + Math.random() * 0.8,
+      angle: Math.random() * Math.PI * 2,
+      popState: 'in',
+      popT: 0
+    });
+  }
+
+  function despawnRandomCube() {
+    const candidates = cubes.filter(c => c.popState !== 'out');
+    if (candidates.length === 0) return;
+    const victim = candidates[Math.floor(Math.random() * candidates.length)];
+    victim.popState = 'out';
+    victim.popT = 0;
+  }
+
+  // called by the GUI slider — adds/removes cubes (with pop animation) to hit the target count
+  function setCubeCount(target) {
+    const activeCount = cubes.filter(c => c.popState !== 'out').length;
+    const diff = target - activeCount;
+    if (diff > 0) {
+      for (let i = 0; i < diff; i++) spawnCube();
+    } else if (diff < 0) {
+      for (let i = 0; i < -diff; i++) despawnRandomCube();
+    }
+  }
+
+  for (let i = 0; i < 6; i++) spawnCube(); // initial cubes, pop in on load
+
+  // ---------- dat.GUI controls ----------
+  const guiParams = { speed: 1, count: 6 };
+  const gui = new dat.GUI();
+  gui.add(guiParams, 'speed', 0.1, 4, 0.1).name('Orbit Speed');
+  gui.add(guiParams, 'count', 0, 20, 1).name('Cube Count').onChange(v => setCubeCount(v));
+
+  // ---------- resize ----------
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- animation loop ----------
+  const clock = new THREE.Clock();
+  let simTime = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    const delta = clock.getDelta();
+    simTime += delta * guiParams.speed; // integrating delta (not reading absolute elapsed time)
+                                         // means changing the speed slider never causes a jump
+
+    if (ready) compositeFrame();
+
+    for (let i = cubes.length - 1; i >= 0; i--) {
+      const c = cubes[i];
+
+      // pop in/out scale animation, timed by real delta (independent of orbit speed)
+      if (c.popState === 'in') {
+        c.popT = Math.min(1, c.popT + delta / POP_DURATION);
+        c.mesh.scale.setScalar(Math.max(0, easeOutBack(c.popT)));
+        if (c.popT >= 1) c.popState = 'idle';
+      } else if (c.popState === 'out') {
+        c.popT = Math.min(1, c.popT + delta / POP_DURATION);
+        c.mesh.scale.setScalar(Math.max(0, 1 - easeInBack(c.popT)));
+        if (c.popT >= 1) {
+          scene.remove(c.mesh);
+          c.mesh.geometry.dispose();
+          c.mesh.material.dispose();
+          cubes.splice(i, 1);
+          continue;
+        }
+      }
+
+      const angle = simTime * c.speed + c.phase;
+      c.mesh.position.x = Math.sin(angle) * c.radius;
+      c.mesh.position.z = Math.cos(angle) * c.radius; // z>0 in front of person, z<0 behind
+      c.mesh.position.y = c.yOffset + Math.sin(simTime * 1.3 + c.phase) * 0.15;
+      c.mesh.rotation.x += 0.01 * c.spin;
+      c.mesh.rotation.y += 0.015 * c.spin;
+    }
+
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
+</script>
+</body>
+</html>
