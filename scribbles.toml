@@ -7,6 +7,12 @@
 #                  If omitted, it links to projects/<slug>/index.html instead.
 
 [[project]]
+slug = "whiteboard_viewport_bookmarks"
+name = "Whiteboard Viewport Bookmarks"
+description = "Whiteboard with bookmarks of viewports (certain locations and zoom levels)"
+
+
+[[project]]
 slug = "rotoscope"
 name = "Rotoscope"
 description = "Put interactive 3d graphics inside a live-action video."
@@ -25,4 +31,3 @@ description = "A shader to make the iconic aesthetic of comic books."
 slug = "pixelated"
 name = "Pixelated"
 description = "Pixelate objects from the viewer, no matter what angle they look."
-

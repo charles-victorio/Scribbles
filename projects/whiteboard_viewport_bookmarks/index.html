@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Infinite Whiteboard</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; background: #ffffff; }
+  canvas { display: block; touch-action: none; }
+
+  #label-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .square-label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: none;
+    font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #f5f5f5;
+    background: rgba(38, 38, 38, 0.85);
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .label-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 20;
+    font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #f5f5f5;
+    background: rgba(38, 38, 38, 0.85);
+    padding: 3px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    border-radius: 4px;
+    outline: none;
+    width: 100px;
+    text-align: center;
+  }
+
+  #handle-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    border: 1.5px solid #4a90e2;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    cursor: nwse-resize;
+    pointer-events: auto;
+    touch-action: none;
+  }
+
+  #lasso-rect {
+    position: absolute;
+    display: none;
+    border: 1px dashed #4a90e2;
+    background: rgba(74, 144, 226, 0.12);
+    pointer-events: none;
+    z-index: 15;
+  }
+
+  #context-menu {
+    position: absolute;
+    display: none;
+    min-width: 120px;
+    background: #ffffff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    z-index: 50;
+    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #context-menu button {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  #context-menu button:hover {
+    background: #f0f4fa;
+  }
+
+  #context-menu .danger:hover {
+    background: #fdeaea;
+    color: #c0392b;
+  }
+
+  #toolbar {
+    height: 48px;
+    background: #f7f7f8;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    box-sizing: border-box;
+  }
+
+  .toolbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+  }
+
+  .toolbar-btn:hover {
+    background: #eceef1;
+  }
+
+  .toolbar-btn.active {
+    background: #e0ecff;
+    border-color: #4a90e2;
+  }
+
+  #placement-preview {
+    position: fixed;
+    top: 0;
+    left: 0;
+    display: none;
+    box-sizing: border-box;
+    /* border: 2px dashed #333; */
+    background: rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+    z-index: 25;
+  }
+
+  #bookmarks-bar {
+    height: 36px;
+    background: #fafafa;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    overflow-x: auto;
+    box-sizing: border-box;
+  }
+
+  .bookmark-chip {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-radius: 5px;
+    background: var(--chip-color, #1e88e5);
+    border: none;
+    font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #ffffff;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .bookmark-chip:hover {
+    filter: brightness(1.12);
+  }
+
+  #bookmark-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .bookmark-outline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    border-width: 2px;
+    border-style: solid;
+    pointer-events: none;
+  }
+
+  .bookmark-outline-label {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    display: none;
+    max-width: calc(100% - 8px);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font: 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .bookmark-minimap-outline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    border-width: 1.5px;
+    border-style: solid;
+    pointer-events: none;
+  }
+
+  #minimap {
+    position: fixed;
+    top: 92px;
+    right: 12px;
+    width: 220px;
+    height: 160px;
+    background: rgba(247, 247, 248, 0.95);
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+    z-index: 35;
+    cursor: crosshair;
+  }
+
+  .minimap-dot {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: #000000;
+    pointer-events: none;
+  }
+
+  #minimap-viewport {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    border: 1.5px solid #e53935;
+    background: transparent;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="tool-add-square" class="toolbar-btn" title="Add Square" aria-label="Add Square">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="8" width="13" height="13" rx="2" fill="#000000"/>
+      <circle cx="16" cy="6" r="6" fill="#4a90e2"/>
+      <path d="M16 3v6M13 6h6" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button id="tool-bookmark" class="toolbar-btn" title="Bookmark Viewport" aria-label="Bookmark Viewport">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M4 2.5h12v15l-6-4.2-6 4.2v-15z" fill="#4a90e2"/>
+    </svg>
+  </button>
+</div>
+<div id="bookmarks-bar"></div>
+<div id="bookmark-layer"></div>
+<div id="label-layer"></div>
+<div id="handle-layer"></div>
+<div id="lasso-rect"></div>
+<div id="placement-preview"></div>
+<div id="minimap">
+  <div id="minimap-viewport"></div>
+</div>
+<div id="context-menu">
+  <button id="ctx-rename">Rename</button>
+  <button id="ctx-delete" class="danger">Delete</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Constants ----------
+  const SQUARE_SCREEN_SIZE_PX = 80;
+  const LABEL_GAP_PX = 6;
+  const MIN_ZOOM = 0.0001;
+  const CLICK_DRAG_THRESHOLD_PX = 5;
+  const ZOOM_SENSITIVITY = 0.001;
+  const SELECTED_COLOR = 0x00ffe5;
+  const DEFAULT_COLOR = 0x000000;
+  const MIN_SQUARE_WORLD_SIZE = 10;
+  const MINIMAP_PADDING_RATIO = 0.15;
+  const MINIMAP_MIN_DOT_PX = 3;
+  const MINIMAP_DEFAULT_HALF_EXTENT = 400;
+  const BOOKMARK_COLORS = ['#e53935', '#8e24aa', '#3949ab', '#1e88e5', '#00897b', '#43a047', '#f4511e', '#6d4c41', '#546e7a'];
+  const CAMERA_FLIGHT_DURATION_MS = 550;
+
+  // ---------- DOM refs ----------
+  const labelLayer = document.getElementById('label-layer');
+  const handleLayer = document.getElementById('handle-layer');
+  const lassoEl = document.getElementById('lasso-rect');
+  const contextMenuEl = document.getElementById('context-menu');
+  const renameBtn = document.getElementById('ctx-rename');
+  const deleteBtn = document.getElementById('ctx-delete');
+  const addSquareBtn = document.getElementById('tool-add-square');
+  const bookmarkBtn = document.getElementById('tool-bookmark');
+  const bookmarksBarEl = document.getElementById('bookmarks-bar');
+  const bookmarkLayer = document.getElementById('bookmark-layer');
+  const placementPreviewEl = document.getElementById('placement-preview');
+  const minimapEl = document.getElementById('minimap');
+  const minimapViewportEl = document.getElementById('minimap-viewport');
+
+  // ---------- State ----------
+  const squares = new Map();
+  const selectedIds = new Set();
+  const bookmarks = new Map();
+  let nextId = 1;
+  let nextBookmarkId = 1;
+
+  let pointerState = null; // { startX, startY, hitId, mode, lastX, lastY }
+  let panState = null;     // { startX, startY, camStartX, camStartY }
+  let resizeState = null;  // { groupIds, initialWorldSizes, anchorId, initialDist }
+  let spacebarHeld = false;
+  let contextMenuTargetId = null;
+  let contextMenuTargetType = null; // 'square' | 'bookmark'
+  let lassoStart = null;
+  let placementMode = false;
+  let minimapDragging = false;
+  let minimapTransform = null; // { minX, maxY, scale, offsetX, offsetY }
+  let cameraFlight = null; // { fromX, fromY, fromZoom, toX, toY, toZoom, startTime, duration }
+
+  function generateId() {
+    return 'sq-' + (nextId++);
+  }
+  function generateBookmarkId() {
+    return 'bm-' + (nextBookmarkId++);
+  }
+
+  // ---------- Three.js setup ----------
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xffffff);
+
+  // Canvas sits in normal document flow below the toolbar + bookmarks bar
+  // (rather than overlaid via z-index), so it gets whatever height remains.
+  function getCanvasTop() {
+    return bookmarksBarEl.getBoundingClientRect().bottom;
+  }
+
+  let halfW = window.innerWidth / 2;
+  let halfH = (window.innerHeight - getCanvasTop()) / 2;
+  const camera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, -1000, 1000);
+  camera.position.set(0, 0, 10);
+  camera.zoom = 1;
+  camera.updateProjectionMatrix();
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight - getCanvasTop());
+  document.body.insertBefore(renderer.domElement, labelLayer);
+
+  const raycaster = new THREE.Raycaster();
+
+  window.addEventListener('resize', () => {
+    const canvasTop = getCanvasTop();
+    halfW = window.innerWidth / 2;
+    halfH = (window.innerHeight - canvasTop) / 2;
+    camera.left = -halfW;
+    camera.right = halfW;
+    camera.top = halfH;
+    camera.bottom = -halfH;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight - canvasTop);
+  });
+
+  // ---------- Coordinate helpers ----------
+  function screenToWorld(clientX, clientY) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const vec = new THREE.Vector3(ndcX, ndcY, 0);
+    vec.unproject(camera);
+    return { x: vec.x, y: vec.y };
+  }
+
+  function worldToScreen(worldX, worldY) {
+    const vec = new THREE.Vector3(worldX, worldY, 0).project(camera);
+    const rect = renderer.domElement.getBoundingClientRect();
+    return {
+      x: rect.left + (vec.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (-vec.y * 0.5 + 0.5) * rect.height,
+    };
+  }
+
+  function positionBelowWorldPoint(el, worldX, worldY, worldSize) {
+    const bottomWorldY = worldY - worldSize / 2;
+    const { x, y } = worldToScreen(worldX, bottomWorldY);
+    el.style.transform = `translate(-50%, 0) translate(${x}px, ${y + LABEL_GAP_PX}px)`;
+  }
+
+  function getSquareAtScreenPoint(clientX, clientY) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
+    scene.updateMatrixWorld();
+    camera.updateMatrixWorld();
+    raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+    const meshes = [];
+    squares.forEach(sq => meshes.push(sq.mesh));
+    const intersects = raycaster.intersectObjects(meshes);
+    return intersects.length ? intersects[0].object.userData.id : null;
+  }
+
+  // ---------- Selection ----------
+  function refreshSelectionVisuals() {
+    squares.forEach(sq => {
+      const isSelected = selectedIds.has(sq.id);
+      const color = isSelected ? SELECTED_COLOR : DEFAULT_COLOR;
+      sq.mesh.material.color.setHex(color);
+      sq.resizeHandleEl.style.display = isSelected ? 'flex' : 'none';
+      sq.minimapDotEl.style.backgroundColor = '#' + color.toString(16).padStart(6, '0');
+    });
+  }
+  function setSelection(ids) {
+    selectedIds.clear();
+    ids.forEach(id => selectedIds.add(id));
+    refreshSelectionVisuals();
+  }
+  function toggleSelection(id) {
+    selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id);
+    refreshSelectionVisuals();
+  }
+  function clearSelection() { setSelection([]); }
+
+  // ---------- Square creation / deletion ----------
+  function setSquareLabel(sq, label) {
+    sq.label = label;
+    sq.labelEl.textContent = label;
+    sq.labelEl.style.display = label ? 'block' : 'none';
+  }
+
+  function createSquare(worldX, worldY, label) {
+    const id = generateId();
+    const worldSize = SQUARE_SCREEN_SIZE_PX / camera.zoom;
+
+    const geometry = new THREE.PlaneGeometry(worldSize, worldSize);
+    const material = new THREE.MeshBasicMaterial({ color: DEFAULT_COLOR });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(worldX, worldY, 0);
+    mesh.userData.id = id;
+    scene.add(mesh);
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'square-label';
+    labelLayer.appendChild(labelEl);
+
+    const resizeHandleEl = document.createElement('div');
+    resizeHandleEl.className = 'resize-handle';
+    resizeHandleEl.dataset.squareId = id;
+    resizeHandleEl.innerHTML =
+      '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="M9 3H3v6" stroke="#4a90e2" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="M15 21h6v-6" stroke="#4a90e2" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="M4 4l16 16" stroke="#4a90e2" stroke-width="2.6" stroke-linecap="round"/>' +
+      '</svg>';
+    handleLayer.appendChild(resizeHandleEl);
+
+    const minimapDotEl = document.createElement('div');
+    minimapDotEl.className = 'minimap-dot';
+    minimapEl.appendChild(minimapDotEl);
+
+    const record = { id, x: worldX, y: worldY, worldSize, label: '', mesh, labelEl, resizeHandleEl, minimapDotEl };
+    squares.set(id, record);
+    setSquareLabel(record, label);
+    setSelection([id]);
+    return id;
+  }
+
+  function deleteSquares(ids) {
+    ids.forEach(id => {
+      const sq = squares.get(id);
+      if (!sq) return;
+      scene.remove(sq.mesh);
+      sq.mesh.geometry.dispose();
+      sq.mesh.material.dispose();
+      sq.labelEl.remove();
+      sq.resizeHandleEl.remove();
+      sq.minimapDotEl.remove();
+      squares.delete(id);
+      selectedIds.delete(id);
+    });
+  }
+
+  function renameSquare(id) {
+    const sq = squares.get(id);
+    if (!sq) return;
+    promptForLabel(sq.x, sq.y, sq.worldSize, newLabel => {
+      setSquareLabel(sq, newLabel);
+    }, sq.label);
+  }
+
+  // ---------- Label / rename input ----------
+  function createLabelInput(positionFn, onCommit, initialValue) {
+    const input = document.createElement('input');
+    input.className = 'label-input';
+    input.value = initialValue || '';
+    positionFn(input);
+    document.body.appendChild(input);
+    input.focus();
+    input.select();
+
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      onCommit(input.value.trim());
+      input.remove();
+    };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      input.remove();
+    };
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      e.stopPropagation();
+    });
+    input.addEventListener('blur', commit);
+  }
+
+  function promptForLabel(worldX, worldY, worldSize, onCommit, initialValue) {
+    createLabelInput(input => positionBelowWorldPoint(input, worldX, worldY, worldSize), onCommit, initialValue);
+  }
+
+  function promptForLabelAtElement(el, onCommit, initialValue) {
+    createLabelInput(input => {
+      const rect = el.getBoundingClientRect();
+      input.style.transform = `translate(0, 0) translate(${rect.left}px, ${rect.bottom + 6}px)`;
+    }, onCommit, initialValue);
+  }
+
+  // ---------- Dragging squares (move) ----------
+  function dragSelectedSquares(deltaXpx, deltaYpx) {
+    const worldDx = deltaXpx / camera.zoom;
+    const worldDy = -deltaYpx / camera.zoom;
+    selectedIds.forEach(id => {
+      const sq = squares.get(id);
+      sq.x += worldDx;
+      sq.y += worldDy;
+      sq.mesh.position.set(sq.x, sq.y, 0);
+    });
+  }
+
+  // ---------- Resizing squares (via corner handle) ----------
+  function applySquareWorldSize(sq, newWorldSize) {
+    const size = Math.max(newWorldSize, MIN_SQUARE_WORLD_SIZE);
+    sq.worldSize = size;
+    const oldGeometry = sq.mesh.geometry;
+    sq.mesh.geometry = new THREE.PlaneGeometry(size, size);
+    oldGeometry.dispose();
+  }
+
+  function startResize(anchorId, e) {
+    const anchorSq = squares.get(anchorId);
+    if (!anchorSq) return;
+    const groupIds = selectedIds.has(anchorId) && selectedIds.size > 1
+      ? Array.from(selectedIds)
+      : [anchorId];
+    const initialWorldSizes = new Map();
+    groupIds.forEach(id => {
+      const sq = squares.get(id);
+      if (sq) initialWorldSizes.set(id, sq.worldSize);
+    });
+    const cursorWorld = screenToWorld(e.clientX, e.clientY);
+    const initialDist = Math.max(Math.hypot(cursorWorld.x - anchorSq.x, cursorWorld.y - anchorSq.y), 1e-6);
+    resizeState = { anchorId, groupIds, initialWorldSizes, initialDist };
+  }
+
+  function updateResize(e) {
+    const anchorSq = squares.get(resizeState.anchorId);
+    if (!anchorSq) { resizeState = null; return; }
+    const cursorWorld = screenToWorld(e.clientX, e.clientY);
+    const dist = Math.hypot(cursorWorld.x - anchorSq.x, cursorWorld.y - anchorSq.y);
+    const scale = dist / resizeState.initialDist;
+    resizeState.groupIds.forEach(id => {
+      const sq = squares.get(id);
+      if (!sq) return;
+      applySquareWorldSize(sq, resizeState.initialWorldSizes.get(id) * scale);
+    });
+  }
+
+  // ---------- Bookmarks ----------
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  function setBookmarkLabel(bm, label) {
+    bm.label = label;
+    bm.outlineLabelEl.textContent = label;
+    bm.outlineLabelEl.style.display = label ? 'block' : 'none';
+    bm.chipLabelEl.textContent = label || '(untitled)';
+  }
+
+  function goToBookmark(bm) {
+    cameraFlight = {
+      fromX: camera.position.x, fromY: camera.position.y, fromZoom: camera.zoom,
+      toX: bm.x, toY: bm.y, toZoom: bm.zoom,
+      startTime: performance.now(),
+      duration: CAMERA_FLIGHT_DURATION_MS,
+    };
+  }
+
+  function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  function updateCameraFlight() {
+    if (!cameraFlight) return;
+    const elapsed = performance.now() - cameraFlight.startTime;
+    const t = Math.min(elapsed / cameraFlight.duration, 1);
+    const eased = easeOutCubic(t);
+    camera.position.x = cameraFlight.fromX + (cameraFlight.toX - cameraFlight.fromX) * eased;
+    camera.position.y = cameraFlight.fromY + (cameraFlight.toY - cameraFlight.fromY) * eased;
+    camera.zoom = cameraFlight.fromZoom * Math.pow(cameraFlight.toZoom / cameraFlight.fromZoom, eased);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    if (t >= 1) cameraFlight = null;
+  }
+
+  function createBookmark() {
+    const viewWorldW = (camera.right - camera.left) / camera.zoom;
+    const viewWorldH = (camera.top - camera.bottom) / camera.zoom;
+    const color = BOOKMARK_COLORS[Math.floor(Math.random() * BOOKMARK_COLORS.length)];
+    const id = generateBookmarkId();
+
+    const outlineEl = document.createElement('div');
+    outlineEl.className = 'bookmark-outline';
+    outlineEl.style.borderColor = color;
+    outlineEl.style.backgroundColor = hexToRgba(color, 0.15);
+    const outlineLabelEl = document.createElement('div');
+    outlineLabelEl.className = 'bookmark-outline-label';
+    outlineLabelEl.style.background = color;
+    outlineEl.appendChild(outlineLabelEl);
+    bookmarkLayer.appendChild(outlineEl);
+
+    const minimapOutlineEl = document.createElement('div');
+    minimapOutlineEl.className = 'bookmark-minimap-outline';
+    minimapOutlineEl.style.borderColor = color;
+    minimapEl.appendChild(minimapOutlineEl);
+
+    const chipEl = document.createElement('div');
+    chipEl.className = 'bookmark-chip';
+    chipEl.style.setProperty('--chip-color', color);
+    const chipLabelEl = document.createElement('span');
+    chipEl.appendChild(chipLabelEl);
+    bookmarksBarEl.appendChild(chipEl);
+
+    const bm = {
+      id, label: '', color,
+      x: camera.position.x, y: camera.position.y, zoom: camera.zoom,
+      minX: camera.position.x - viewWorldW / 2,
+      maxX: camera.position.x + viewWorldW / 2,
+      minY: camera.position.y - viewWorldH / 2,
+      maxY: camera.position.y + viewWorldH / 2,
+      outlineEl, outlineLabelEl, minimapOutlineEl, chipEl, chipLabelEl,
+    };
+    bookmarks.set(id, bm);
+    setBookmarkLabel(bm, '');
+
+    chipEl.addEventListener('click', () => goToBookmark(bm));
+    chipEl.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, id, 'bookmark');
+    });
+
+    return id;
+  }
+
+  function renameBookmark(id) {
+    const bm = bookmarks.get(id);
+    if (!bm) return;
+    promptForLabelAtElement(bm.chipEl, newLabel => setBookmarkLabel(bm, newLabel), bm.label);
+  }
+
+  function deleteBookmark(id) {
+    const bm = bookmarks.get(id);
+    if (!bm) return;
+    bm.outlineEl.remove();
+    bm.minimapOutlineEl.remove();
+    bm.chipEl.remove();
+    bookmarks.delete(id);
+  }
+
+  function updateBookmarkOutlinePosition(bm) {
+    const topLeft = worldToScreen(bm.minX, bm.maxY);
+    const bottomRight = worldToScreen(bm.maxX, bm.minY);
+    bm.outlineEl.style.transform = `translate(${topLeft.x}px, ${topLeft.y}px)`;
+    bm.outlineEl.style.width = `${bottomRight.x - topLeft.x}px`;
+    bm.outlineEl.style.height = `${bottomRight.y - topLeft.y}px`;
+  }
+
+  bookmarkBtn.addEventListener('click', () => {
+    const id = createBookmark();
+    renameBookmark(id);
+  });
+
+  // ---------- Lasso ----------
+  function startLasso(e) {
+    lassoEl.style.display = 'block';
+    lassoStart = { x: e.clientX, y: e.clientY };
+    updateLasso(e);
+  }
+  function updateLasso(e) {
+    const x = Math.min(lassoStart.x, e.clientX);
+    const y = Math.min(lassoStart.y, e.clientY);
+    const w = Math.abs(e.clientX - lassoStart.x);
+    const h = Math.abs(e.clientY - lassoStart.y);
+    Object.assign(lassoEl.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+  }
+  function finishLasso(additive) {
+    const rect = lassoEl.getBoundingClientRect();
+    const p1 = screenToWorld(rect.left, rect.top);
+    const p2 = screenToWorld(rect.right, rect.bottom);
+    const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+    const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+
+    const hits = [];
+    squares.forEach(sq => {
+      const half = sq.worldSize / 2;
+      const intersects = (sq.x + half >= minX) && (sq.x - half <= maxX)
+                       && (sq.y + half >= minY) && (sq.y - half <= maxY);
+      if (intersects) hits.push(sq.id);
+    });
+    if (additive) {
+      setSelection([...selectedIds, ...hits]);
+    } else {
+      setSelection(hits);
+    }
+    lassoEl.style.display = 'none';
+  }
+  function cancelLasso() {
+    lassoEl.style.display = 'none';
+  }
+
+  // ---------- Context menu ----------
+  function showContextMenu(x, y, targetId, targetType) {
+    contextMenuTargetId = targetId;
+    contextMenuTargetType = targetType;
+    contextMenuEl.style.left = `${x}px`;
+    contextMenuEl.style.top = `${y}px`;
+    contextMenuEl.style.display = 'block';
+  }
+  function hideContextMenu() {
+    contextMenuEl.style.display = 'none';
+    contextMenuTargetId = null;
+    contextMenuTargetType = null;
+  }
+
+  renameBtn.addEventListener('click', () => {
+    const id = contextMenuTargetId;
+    const type = contextMenuTargetType;
+    hideContextMenu();
+    if (!id) return;
+    if (type === 'bookmark') renameBookmark(id);
+    else renameSquare(id);
+  });
+  deleteBtn.addEventListener('click', () => {
+    const id = contextMenuTargetId;
+    const type = contextMenuTargetType;
+    hideContextMenu();
+    if (type === 'bookmark') { if (id) deleteBookmark(id); return; }
+    deleteSquares(Array.from(selectedIds));
+  });
+
+  window.addEventListener('pointerdown', e => {
+    if (contextMenuEl.style.display === 'block' && !contextMenuEl.contains(e.target)) {
+      hideContextMenu();
+    }
+  }, true);
+
+  renderer.domElement.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (placementMode) { exitPlacementMode(); return; }
+    const hitId = getSquareAtScreenPoint(e.clientX, e.clientY);
+    if (!hitId) { hideContextMenu(); return; }
+    if (!selectedIds.has(hitId)) setSelection([hitId]);
+    showContextMenu(e.clientX, e.clientY, hitId, 'square');
+  });
+
+  // ---------- Resize handle interaction ----------
+  handleLayer.addEventListener('pointerdown', e => {
+    const handle = e.target.closest('.resize-handle');
+    if (!handle || e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    startResize(handle.dataset.squareId, e);
+  });
+
+  // ---------- Add-square placement mode (toolbar) ----------
+  function enterPlacementMode() {
+    placementMode = true;
+    clearSelection();
+    addSquareBtn.classList.add('active');
+    renderer.domElement.style.cursor = 'crosshair';
+    placementPreviewEl.style.width = `${SQUARE_SCREEN_SIZE_PX}px`;
+    placementPreviewEl.style.height = `${SQUARE_SCREEN_SIZE_PX}px`;
+    placementPreviewEl.style.display = 'none'; // shown on first pointermove
+  }
+  function exitPlacementMode() {
+    placementMode = false;
+    addSquareBtn.classList.remove('active');
+    renderer.domElement.style.cursor = 'default';
+    placementPreviewEl.style.display = 'none';
+  }
+  function updatePlacementPreview(clientX, clientY) {
+    placementPreviewEl.style.display = 'block';
+    placementPreviewEl.style.transform = `translate(-50%, -50%) translate(${clientX}px, ${clientY}px)`;
+  }
+
+  addSquareBtn.addEventListener('click', () => {
+    if (placementMode) exitPlacementMode();
+    else enterPlacementMode();
+  });
+
+  // ---------- Pan ----------
+  function startPan(e) {
+    cameraFlight = null;
+    panState = {
+      startX: e.clientX, startY: e.clientY,
+      camStartX: camera.position.x, camStartY: camera.position.y,
+    };
+    renderer.domElement.style.cursor = 'grabbing';
+  }
+  function updatePan(e) {
+    const dx = (e.clientX - panState.startX) / camera.zoom;
+    const dy = (e.clientY - panState.startY) / camera.zoom;
+    camera.position.x = panState.camStartX - dx;
+    camera.position.y = panState.camStartY + dy;
+    camera.updateMatrixWorld();
+  }
+  function endPan() {
+    panState = null;
+    renderer.domElement.style.cursor = spacebarHeld ? 'grab' : 'default';
+  }
+
+  // ---------- Zoom ----------
+  renderer.domElement.addEventListener('wheel', e => {
+    e.preventDefault();
+    cameraFlight = null;
+    const worldBefore = screenToWorld(e.clientX, e.clientY);
+    const factor = Math.exp(-e.deltaY * ZOOM_SENSITIVITY);
+    camera.zoom = Math.max(camera.zoom * factor, MIN_ZOOM);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const worldAfter = screenToWorld(e.clientX, e.clientY);
+    camera.position.x -= (worldAfter.x - worldBefore.x);
+    camera.position.y -= (worldAfter.y - worldBefore.y);
+    camera.updateMatrixWorld();
+  }, { passive: false });
+
+  // ---------- Pointer state machine (click / drag / lasso / move) ----------
+  function updateHoverCursor(e) {
+    if (panState || spacebarHeld) return;
+    const hitId = getSquareAtScreenPoint(e.clientX, e.clientY);
+    renderer.domElement.style.cursor = hitId ? 'pointer' : 'default';
+  }
+
+  renderer.domElement.addEventListener('pointerdown', e => {
+    if (e.button === 2 || spacebarHeld) {
+      e.preventDefault();
+      startPan(e);
+      return;
+    }
+    if (placementMode) return; // placement is confirmed on pointerup
+    if (e.button !== 0) return;
+    const hitId = getSquareAtScreenPoint(e.clientX, e.clientY);
+    pointerState = { startX: e.clientX, startY: e.clientY, hitId, mode: null, lastX: e.clientX, lastY: e.clientY };
+  });
+
+  window.addEventListener('pointermove', e => {
+    if (minimapDragging) {
+      const world = minimapPointToWorld(e.clientX, e.clientY);
+      panCameraTo(world.x, world.y);
+      return;
+    }
+    if (resizeState) { updateResize(e); return; }
+    if (placementMode) { updatePlacementPreview(e.clientX, e.clientY); return; }
+    if (panState) { updatePan(e); return; }
+    if (!pointerState) { updateHoverCursor(e); return; }
+
+    const dxTotal = e.clientX - pointerState.startX;
+    const dyTotal = e.clientY - pointerState.startY;
+    const movedPastThreshold = Math.hypot(dxTotal, dyTotal) > CLICK_DRAG_THRESHOLD_PX;
+
+    if (movedPastThreshold && !pointerState.mode) {
+      pointerState.mode = pointerState.hitId ? 'move' : 'lasso';
+      if (pointerState.mode === 'move' && !selectedIds.has(pointerState.hitId)) {
+        setSelection([pointerState.hitId]);
+      }
+      if (pointerState.mode === 'lasso') startLasso(e);
+      pointerState.lastX = e.clientX;
+      pointerState.lastY = e.clientY;
+    }
+
+    if (pointerState.mode === 'move') {
+      dragSelectedSquares(e.clientX - pointerState.lastX, e.clientY - pointerState.lastY);
+      pointerState.lastX = e.clientX;
+      pointerState.lastY = e.clientY;
+    } else if (pointerState.mode === 'lasso') {
+      updateLasso(e);
+    }
+  });
+
+  window.addEventListener('pointerup', e => {
+    if (minimapDragging) { minimapDragging = false; return; }
+    if (resizeState) { resizeState = null; return; }
+    if (panState) { endPan(); return; }
+    if (placementMode) {
+      if (e.button !== 0) return;
+      const world = screenToWorld(e.clientX, e.clientY);
+      exitPlacementMode();
+      const id = createSquare(world.x, world.y, '');
+      renameSquare(id);
+      return;
+    }
+    if (!pointerState) return;
+
+    if (!pointerState.mode) {
+      // pure click
+      if (pointerState.hitId) {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          toggleSelection(pointerState.hitId);
+        } else {
+          setSelection([pointerState.hitId]);
+          if (typeof window.onSquareClick === 'function') window.onSquareClick(pointerState.hitId);
+        }
+      } else {
+        clearSelection();
+      }
+    } else if (pointerState.mode === 'lasso') {
+      finishLasso(e.shiftKey || e.ctrlKey || e.metaKey);
+    }
+    pointerState = null;
+  });
+
+  // ---------- Keyboard ----------
+  window.addEventListener('keydown', e => {
+    if (e.key === ' ' || e.code === 'Space') {
+      if (!panState) renderer.domElement.style.cursor = 'grab';
+      spacebarHeld = true;
+      if (document.activeElement && document.activeElement.tagName !== 'INPUT') e.preventDefault();
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (placementMode) { exitPlacementMode(); return; }
+      if (pointerState && pointerState.mode === 'lasso') {
+        cancelLasso();
+        pointerState = null;
+      }
+      hideContextMenu();
+      clearSelection();
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const activeTag = document.activeElement && document.activeElement.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+      if (selectedIds.size > 0) {
+        e.preventDefault();
+        deleteSquares(Array.from(selectedIds));
+      }
+    }
+  });
+  window.addEventListener('keyup', e => {
+    if (e.key === ' ' || e.code === 'Space') {
+      spacebarHeld = false;
+      if (!panState) renderer.domElement.style.cursor = 'default';
+    }
+  });
+
+  // Prevent the browser's native context menu from lingering over the label layer/menu.
+  document.addEventListener('contextmenu', e => {
+    if (e.target === document.body || e.target === labelLayer) e.preventDefault();
+  });
+
+  // ---------- Render loop ----------
+  function updateLabelPosition(sq) {
+    positionBelowWorldPoint(sq.labelEl, sq.x, sq.y, sq.worldSize);
+  }
+
+  function updateResizeHandlePosition(sq) {
+    const cornerWorldX = sq.x + sq.worldSize / 2;
+    const cornerWorldY = sq.y - sq.worldSize / 2;
+    const { x, y } = worldToScreen(cornerWorldX, cornerWorldY);
+    sq.resizeHandleEl.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+  }
+
+  // ---------- Minimap ----------
+  function updateMinimap() {
+    let minX, maxX, minY, maxY;
+    if (squares.size > 0) {
+      minX = Infinity; maxX = -Infinity; minY = Infinity; maxY = -Infinity;
+      squares.forEach(sq => {
+        const half = sq.worldSize / 2;
+        minX = Math.min(minX, sq.x - half);
+        maxX = Math.max(maxX, sq.x + half);
+        minY = Math.min(minY, sq.y - half);
+        maxY = Math.max(maxY, sq.y + half);
+      });
+    } else {
+      minX = -MINIMAP_DEFAULT_HALF_EXTENT; maxX = MINIMAP_DEFAULT_HALF_EXTENT;
+      minY = -MINIMAP_DEFAULT_HALF_EXTENT; maxY = MINIMAP_DEFAULT_HALF_EXTENT;
+    }
+
+    const padX = Math.max(maxX - minX, 1) * MINIMAP_PADDING_RATIO;
+    const padY = Math.max(maxY - minY, 1) * MINIMAP_PADDING_RATIO;
+    minX -= padX; maxX += padX;
+    minY -= padY; maxY += padY;
+    const worldW = maxX - minX;
+    const worldH = maxY - minY;
+
+    const panelW = minimapEl.clientWidth;
+    const panelH = minimapEl.clientHeight;
+    const scale = Math.min(panelW / worldW, panelH / worldH);
+    const offsetX = (panelW - worldW * scale) / 2;
+    const offsetY = (panelH - worldH * scale) / 2;
+
+    minimapTransform = { minX, maxY, scale, offsetX, offsetY };
+
+    const worldToMinimap = (wx, wy) => ({
+      x: offsetX + (wx - minX) * scale,
+      y: offsetY + (maxY - wy) * scale,
+    });
+
+    squares.forEach(sq => {
+      const topLeft = worldToMinimap(sq.x - sq.worldSize / 2, sq.y + sq.worldSize / 2);
+      const sizePx = Math.max(sq.worldSize * scale, MINIMAP_MIN_DOT_PX);
+      sq.minimapDotEl.style.transform = `translate(${topLeft.x}px, ${topLeft.y}px)`;
+      sq.minimapDotEl.style.width = `${sizePx}px`;
+      sq.minimapDotEl.style.height = `${sizePx}px`;
+    });
+
+    bookmarks.forEach(bm => {
+      const bmTopLeft = worldToMinimap(bm.minX, bm.maxY);
+      const bmBottomRight = worldToMinimap(bm.maxX, bm.minY);
+      bm.minimapOutlineEl.style.transform = `translate(${bmTopLeft.x}px, ${bmTopLeft.y}px)`;
+      bm.minimapOutlineEl.style.width = `${bmBottomRight.x - bmTopLeft.x}px`;
+      bm.minimapOutlineEl.style.height = `${bmBottomRight.y - bmTopLeft.y}px`;
+    });
+
+    const viewWorldW = (camera.right - camera.left) / camera.zoom;
+    const viewWorldH = (camera.top - camera.bottom) / camera.zoom;
+    const vpTopLeft = worldToMinimap(camera.position.x - viewWorldW / 2, camera.position.y + viewWorldH / 2);
+    minimapViewportEl.style.transform = `translate(${vpTopLeft.x}px, ${vpTopLeft.y}px)`;
+    minimapViewportEl.style.width = `${viewWorldW * scale}px`;
+    minimapViewportEl.style.height = `${viewWorldH * scale}px`;
+  }
+
+  function minimapPointToWorld(clientX, clientY) {
+    const rect = minimapEl.getBoundingClientRect();
+    const { minX, maxY, scale, offsetX, offsetY } = minimapTransform;
+    return {
+      x: minX + (clientX - rect.left - offsetX) / scale,
+      y: maxY - (clientY - rect.top - offsetY) / scale,
+    };
+  }
+
+  function panCameraTo(worldX, worldY) {
+    cameraFlight = null;
+    camera.position.x = worldX;
+    camera.position.y = worldY;
+    camera.updateMatrixWorld();
+  }
+
+  minimapEl.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !minimapTransform) return;
+    e.stopPropagation();
+    minimapDragging = true;
+    const world = minimapPointToWorld(e.clientX, e.clientY);
+    panCameraTo(world.x, world.y);
+  });
+
+  function animate() {
+    requestAnimationFrame(animate);
+    updateCameraFlight();
+    squares.forEach(sq => {
+      updateLabelPosition(sq);
+      updateResizeHandlePosition(sq);
+    });
+    bookmarks.forEach(updateBookmarkOutlinePosition);
+    updateMinimap();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Default no-op click callback, overridable by embedding page.
+  window.onSquareClick = window.onSquareClick || function (id) { /* no-op */ };
+})();
+</script>
+</body>
+</html>
