@@ -807,7 +807,7 @@ const TRAIL_N = 48;
 // doesn't z-fight the opaque screen plane
 const TRAIL_OFFSET = new THREE.Matrix4().makeTranslation(0, 0, -(SCREEN_D - 0.03));
 const trail = {
-  enabled: true, mode: 'ribbon', opacity: 0.14, falloff: 2.0, kernel: 1.8, additive: false,
+  enabled: true, mode: 'ribbon', opacity: 0.6, falloff: 1.0, kernel: 1.8, additive: true,
   head: 0, count: 0, lastT: -1e3,
   lastPos: new THREE.Vector3(1e9, 1e9, 1e9), lastQuat: new THREE.Quaternion(),
 };
