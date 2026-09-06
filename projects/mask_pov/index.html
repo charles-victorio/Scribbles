@@ -560,7 +560,7 @@ fx.push(npcMat, shirtMat, shortsMat);
 ========================================================= */
 const grParams = {
   enabled: true,
-  intensity: 0.2,
+  intensity: 0.5,
   color: '#ffe6bf',
   reach: 1.0,        // 0 = light only at the window, 1 = out to the near (truncated) end
   edge: 0.6,         // 0 = hard cone wall, 1 = very soft
@@ -807,7 +807,7 @@ const TRAIL_N = 48;
 // doesn't z-fight the opaque screen plane
 const TRAIL_OFFSET = new THREE.Matrix4().makeTranslation(0, 0, -(SCREEN_D - 0.03));
 const trail = {
-  enabled: false, mode: 'ribbon', opacity: 0.14, falloff: 2.0, kernel: 1.8, additive: false,
+  enabled: true, mode: 'ribbon', opacity: 0.14, falloff: 2.0, kernel: 1.8, additive: false,
   head: 0, count: 0, lastT: -1e3,
   lastPos: new THREE.Vector3(1e9, 1e9, 1e9), lastQuat: new THREE.Quaternion(),
 };
