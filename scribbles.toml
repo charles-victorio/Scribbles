@@ -23,6 +23,11 @@ name = "Rotoscope"
 description = "Put interactive 3d graphics inside a live-action video."
 
 [[project]]
+slug = "rotoscope_with_lighting"
+name = "Rotoscope with Lighting"
+description = "Turn a photo into a 3D scene with moving objects that cast light"
+
+[[project]]
 slug = "pov2panel"
 name = "POV 2 Panel"
 description = "Take snapshots of a 3d world and turn them into a comic book."

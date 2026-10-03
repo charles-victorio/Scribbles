@@ -1,0 +1,271 @@
+{
+  "source": "rehearsal_circle.jpg",
+  "size": [
+    1600,
+    1067
+  ],
+  "people": [
+    {
+      "id": "cream_knit",
+      "bbox": [
+        19,
+        275,
+        286,
+        1015
+      ],
+      "band": "near",
+      "points_pos": [
+        [
+          110,
+          520
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 311.8
+    },
+    {
+      "id": "navy_homecoming",
+      "bbox": [
+        141,
+        305,
+        298,
+        908
+      ],
+      "band": "mid",
+      "points_pos": [
+        [
+          240,
+          520
+        ]
+      ],
+      "points_neg": [
+        [
+          110,
+          560
+        ]
+      ],
+      "disparity": 185.2,
+      "extra_prompts": [
+        {
+          "points_pos": [
+            [
+              245,
+              720
+            ],
+            [
+              250,
+              800
+            ]
+          ],
+          "points_neg": [
+            [
+              120,
+              750
+            ]
+          ]
+        },
+        {
+          "points_pos": [
+            [
+              165,
+              800
+            ],
+            [
+              150,
+              870
+            ]
+          ],
+          "points_neg": [
+            [
+              110,
+              750
+            ]
+          ]
+        },
+        {
+          "points_pos": [
+            [
+              215,
+              410
+            ],
+            [
+              240,
+              600
+            ]
+          ],
+          "points_neg": [
+            [
+              110,
+              560
+            ]
+          ]
+        }
+      ],
+      "subtract": [
+        "cream_knit"
+      ]
+    },
+    {
+      "id": "blue_scarf",
+      "bbox": [
+        299,
+        381,
+        450,
+        843
+      ],
+      "band": "far",
+      "points_pos": [
+        [
+          350,
+          560
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 168.7
+    },
+    {
+      "id": "black_tee_back",
+      "bbox": [
+        405,
+        382,
+        514,
+        770
+      ],
+      "band": "far",
+      "points_pos": [
+        [
+          455,
+          530
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 120.3
+    },
+    {
+      "id": "grey_tee_left",
+      "bbox": [
+        524,
+        375,
+        676,
+        741
+      ],
+      "band": "far",
+      "points_pos": [
+        [
+          575,
+          480
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 94.9
+    },
+    {
+      "id": "conductor",
+      "bbox": [
+        675,
+        340,
+        827,
+        841
+      ],
+      "band": "far",
+      "points_pos": [
+        [
+          755,
+          500
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 172.1
+    },
+    {
+      "id": "navy_cardigan",
+      "bbox": [
+        833,
+        421,
+        929,
+        724
+      ],
+      "band": "far",
+      "points_pos": [
+        [
+          880,
+          520
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 101.7
+    },
+    {
+      "id": "grey_hoodie",
+      "bbox": [
+        960,
+        410,
+        1053,
+        726
+      ],
+      "band": "far",
+      "points_pos": [
+        [
+          1005,
+          500
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 94.3
+    },
+    {
+      "id": "striped_tee",
+      "desc": "man in grey/yellow striped tee, khaki pants, back to camera, reading sheet music",
+      "bbox": [
+        1035,
+        40,
+        1465,
+        1067
+      ],
+      "band": "near",
+      "points_pos": [
+        [
+          1260,
+          350
+        ],
+        [
+          1270,
+          700
+        ],
+        [
+          1180,
+          140
+        ]
+      ],
+      "points_neg": [
+        [
+          1540,
+          400
+        ],
+        [
+          1400,
+          750
+        ]
+      ],
+      "disparity": 360.3
+    },
+    {
+      "id": "grey_tee_glasses",
+      "bbox": [
+        1393,
+        96,
+        1600,
+        1049
+      ],
+      "band": "near",
+      "points_pos": [
+        [
+          1530,
+          420
+        ]
+      ],
+      "points_neg": [],
+      "disparity": 351.0
+    }
+  ]
+}
