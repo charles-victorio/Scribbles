@@ -7,6 +7,11 @@
 #                  If omitted, it links to projects/<slug>/index.html instead.
 
 [[project]]
+slug = "rotoscope_with_lighting"
+name = "Rotoscope with Lighting"
+description = "Turn a photo into a 3D scene with moving objects that cast light."
+
+[[project]]
 slug = "mask_pov"
 name = "Mask POV"
 description = "We see the outside world through our own lens."
@@ -16,16 +21,10 @@ slug = "whiteboard_viewport_bookmarks"
 name = "Whiteboard Viewport Bookmarks"
 description = "Whiteboard with bookmarks of viewports (certain locations and zoom levels)"
 
-
 [[project]]
 slug = "rotoscope"
 name = "Rotoscope"
 description = "Put interactive 3d graphics inside a live-action video."
-
-[[project]]
-slug = "rotoscope_with_lighting"
-name = "Rotoscope with Lighting"
-description = "Turn a photo into a 3D scene with moving objects that cast light"
 
 [[project]]
 slug = "pov2panel"
