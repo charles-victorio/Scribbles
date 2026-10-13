@@ -7,6 +7,11 @@
 #                  If omitted, it links to projects/<slug>/index.html instead.
 
 [[project]]
+slug = "infinipipe_1"
+name = "Infinipipe 1"
+description = "Model of a prototype automatic continuous steamroller pipe."
+
+[[project]]
 slug = "rotoscope_with_lighting"
 name = "Rotoscope with Lighting"
 description = "Turn a photo into a 3D scene with moving objects that cast light."

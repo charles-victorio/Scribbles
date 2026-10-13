@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Infinipipe</title>
+<style>
+  :root { --bg: #8a8f94; --panel: rgba(20, 22, 26, 0.82); --text: #e8eaed; --muted: #a9adb3; --accent: #ffb347; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); font: 13px/1.4 system-ui, sans-serif; color: var(--text); }
+  canvas { display: block; }
+  .panel { position: fixed; background: var(--panel); padding: 8px 10px; border-radius: 8px; }
+  #bar { top: 12px; left: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 48px); }
+  #phases { bottom: 12px; left: 12px; display: flex; gap: 4px; flex-wrap: wrap; max-width: calc(100vw - 48px); }
+  #readout { top: 12px; right: 12px; white-space: pre; font: 12px/1.5 ui-monospace, monospace; color: var(--muted); }
+  .chip { padding: 2px 8px; border-radius: 999px; background: #2b2f35; border: 1px solid #454a52; color: var(--muted); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #1a1a1a; }
+  select, button { font: inherit; color: var(--text); background: #2b2f35; border: 1px solid #454a52; border-radius: 6px; padding: 4px 8px; }
+  button { cursor: pointer; }
+  .label { font: 11px system-ui, sans-serif; color: #fff; background: rgba(20, 22, 26, 0.75); padding: 1px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
+  @media (max-width: 700px) { #readout { top: auto; bottom: 64px; right: auto; left: 12px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="bar" class="panel">
+  <strong>Infinipipe</strong>
+  <button id="play" title="Pause / resume (space)">Pause</button>
+  <select id="speed" aria-label="Speed">
+    <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+    <option value="1" selected>1×</option><option value="2">2×</option>
+  </select>
+  <button id="labels">Labels: on</button>
+  <button id="frame">Reset view</button>
+</div>
+<div id="readout" class="panel"></div>
+<div id="phases" class="panel"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// Model is authored in cm; `root` scales it to metres.
+const PI = Math.PI, TAU = 2 * PI;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x8a8f94);
+document.body.appendChild(renderer.domElement);
+
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.cssText = 'position:fixed;top:0;left:0;pointer-events:none';
+document.body.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment()).texture;
+scene.environmentIntensity = 0.6;
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(0.25, 0.6, 0.35);
+sun.target.position.set(0.04, 0, -0.02);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -0.3, right: 0.3, top: 0.3, bottom: -0.3, near: 0.1, far: 1.5 });
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.ShadowMaterial({ opacity: 0.18 }));
+ground.rotation.x = -PI / 2;
+ground.position.y = -0.0081;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const camera = new THREE.PerspectiveCamera(35, 1, 0.005, 20);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+function frameView() {
+  controls.target.set(0.03, 0.06, -0.02);
+  camera.position.set(0.40, 0.34, 0.56);
+  controls.update();
+}
+frameView();
+
+const root = new THREE.Group();
+root.scale.setScalar(0.01);
+scene.add(root);
+
+// ---------- materials ----------
+const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, ...o });
+const see = (color, opacity) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.05, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+const M = {
+  base: std(0x3a3f46, { roughness: 0.85 }),
+  steel: std(0xb8bcc2, { metalness: 0.85, roughness: 0.35 }),
+  steel2: std(0xb8bcc2, { metalness: 0.85, roughness: 0.35, side: THREE.DoubleSide }),
+  dark: std(0x2b2f35, { metalness: 0.4, roughness: 0.55 }),
+  rubber: std(0x1c1c1c, { roughness: 0.9 }),
+  glass: see(0xdff3ff, 0.22),
+  augerGlass: see(0xffd9a0, 0.3),
+  auger: std(0xe08a2c, { side: THREE.DoubleSide }),
+  arm: std(0x3a7bd5, { metalness: 0.2, roughness: 0.45 }),
+  copper: std(0xb87333, { metalness: 0.9, roughness: 0.3 }),
+  ceramic: std(0xe8e2d6, { roughness: 0.8 }),
+  nichrome: std(0x6b6b6b, { metalness: 0.7, roughness: 0.4, emissive: 0xff3300, emissiveIntensity: 0 }),
+  can: std(0x6b7078, { metalness: 0.6, roughness: 0.5, side: THREE.DoubleSide }),
+  cam: std(0xd94f3d, { metalness: 0.3, roughness: 0.4 }),
+  spring: std(0xc9ccd1, { metalness: 0.9, roughness: 0.25 }),
+  camBody: std(0x1f2226),
+  lens: std(0x3fa9f5, { emissive: 0x0a3050 }),
+  // pebble fields take their colour from per-instance colours
+  pebble: std(0xffffff, { roughness: 0.95, flatShading: true }),
+  contents: std(0xffffff, { roughness: 0.95, flatShading: true, emissive: 0xff5a1a, emissiveIntensity: 0 }),
+  granule: std(0x8f6a3e, { roughness: 0.95, flatShading: true }),
+  ash: std(0x141414, { roughness: 1, flatShading: true }),
+  frustum: new THREE.MeshBasicMaterial({ color: 0x3fa9f5, transparent: true, opacity: 0.04, depthWrite: false, side: THREE.DoubleSide }),
+  smoke: std(0xdadada, { roughness: 1, transparent: true, opacity: 0, depthWrite: false }),
+};
+
+// ---------- helpers ----------
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const UP = V(0, 1, 0);
+function mesh(geo, mat, parent = root, pos) {
+  const m = new THREE.Mesh(geo, mat);
+  if (pos) m.position.set(...pos);
+  parent.add(m);
+  return m;
+}
+const box = (w, h, d, mat, parent, pos) => mesh(new THREE.BoxGeometry(w, h, d), mat, parent, pos);
+// Cylinder whose axis runs along x.
+function cylX(r, len, mat, parent, pos, open = false, rTop = r) {
+  const m = mesh(new THREE.CylinderGeometry(rTop, r, len, 40, 1, open), mat, parent, pos);
+  m.rotation.z = -PI / 2;
+  return m;
+}
+function cylZ(r, len, mat, parent, pos) {
+  const m = mesh(new THREE.CylinderGeometry(r, r, len, 32), mat, parent, pos);
+  m.rotation.x = PI / 2;
+  return m;
+}
+function cylBetween(a, b, r, mat, parent = root, open = false) {
+  const d = b.clone().sub(a);
+  const m = mesh(new THREE.CylinderGeometry(r, r, d.length(), 24, 1, open), mat, parent);
+  m.position.copy(a).addScaledVector(d, 0.5);
+  m.quaternion.setFromUnitVectors(UP, d.normalize());
+  return m;
+}
+const labels = [];
+function label(text, parent, pos) {
+  const div = document.createElement('div');
+  div.className = 'label';
+  div.textContent = text;
+  const o = new CSS2DObject(div);
+  o.position.set(...pos);
+  parent.add(o);
+  labels.push(o);
+}
+class Helix extends THREE.Curve {
+  constructor(r, turns, len) { super(); Object.assign(this, { r, turns, len }); }
+  getPoint(t, out = new THREE.Vector3()) {
+    const a = t * this.turns * TAU;
+    return out.set(t * this.len, this.r * Math.cos(a), this.r * Math.sin(a));
+  }
+}
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const rand = (a, b) => a + Math.random() * (b - a);
+
+// ---------- pebbles ----------
+// A container's contents: n rocks sampled inside a volume, sorted bottom-up so that
+// setting `im.count` fills the container from the bottom.
+const pebbleGeo = new THREE.IcosahedronGeometry(1, 0);
+const sandColor = c => c.setHSL(rand(0.07, 0.09), rand(0.35, 0.5), rand(0.3, 0.45));   // cardboard brown
+const ashColorOf = c => c.setHSL(0, 0, rand(0.02, 0.08));   // burned black
+const _d = new THREE.Object3D();
+function pebbleField(parent, mat, n, sample, [sMin, sMax], colorFn) {
+  const pts = [];
+  while (pts.length < n) {
+    const p = sample();
+    if (p) pts.push({ p, s: rand(sMin, sMax), e: new THREE.Euler(rand(0, TAU), rand(0, TAU), rand(0, TAU)) });
+  }
+  pts.sort((a, b) => a.p.y - b.p.y);
+  const im = new THREE.InstancedMesh(pebbleGeo, mat, n);
+  const c = new THREE.Color();
+  pts.forEach((q, i) => {
+    _d.position.copy(q.p); _d.rotation.copy(q.e); _d.scale.setScalar(q.s); _d.updateMatrix();
+    im.setMatrixAt(i, _d.matrix);
+    q.color = colorFn(c).clone();
+    im.setColorAt(i, q.color);
+  });
+  im.castShadow = im.receiveShadow = true;
+  parent.add(im);
+  return { im, pts };
+}
+// rejection-sample a point inside a solid of revolution: radius(y) for y in [y0, y1]
+function inRevolution(y0, y1, radius, cx = 0, cz = 0) {
+  return () => {
+    const y = rand(y0, y1), r = radius(y);
+    const x = rand(-r, r), z = rand(-r, r);
+    return x * x + z * z < r * r ? V(cx + x, y, cz + z) : null;
+  };
+}
+const ease = x => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+
+// ---------- layout (cm) ----------
+const TUBE = { x0: 2, x1: 18, y: 5, r: 1.6 };
+const BOWL_X = 10;
+const CAM = { x: -9, y: 5, rMin: 1.5, rMax: 3.0 };   // carb stroke = rMax - rMin
+const ROLLER_R = 0.4;
+const CARB_X = TUBE.x0 - 0.4;                        // face of the carb lip
+const STOPPER_OFFSET = CARB_X - (CAM.x + CAM.rMax + ROLLER_R);   // roller centre -> stopper face
+const BUSHING = { x0: -2, x1: -1 };
+const PIVOT = V(BOWL_X, 7.4, -4), ARM_LEN = 4;
+const CAN = { x: BOWL_X, z: -8, r: 2.4, h: 5.5 };
+const NOZZLE_X = 22;
+
+box(40, 0.8, 19, M.base, root, [4, -0.4, -2.5]);
+
+// ---------- steamroller ----------
+cylX(TUBE.r, TUBE.x1 - TUBE.x0, M.glass, root, [(TUBE.x0 + TUBE.x1) / 2, TUBE.y, 0], true);
+// carb: open left end of the tube with a lip the stopper seals against
+cylX(TUBE.r + 0.15, 0.4, M.dark, root, [TUBE.x0 - 0.2, TUBE.y, 0], true);
+const carbLip = mesh(new THREE.TorusGeometry(TUBE.r + 0.05, 0.14, 10, 48), M.dark, root, [CARB_X + 0.1, TUBE.y, 0]);
+carbLip.rotation.y = PI / 2;
+label('Carb', root, [CARB_X, TUBE.y + 2.3, 0]);
+cylX(TUBE.r, 1.2, M.glass, root, [TUBE.x1 + 0.6, TUBE.y, 0], true, 0.75);
+cylX(0.75, NOZZLE_X - TUBE.x1 - 1.2, M.glass, root, [(TUBE.x1 + 1.2 + NOZZLE_X) / 2, TUBE.y, 0], true);
+cylX(0.9, 0.3, M.dark, root, [NOZZLE_X, TUBE.y, 0]);
+for (const x of [4, 16]) box(1.6, TUBE.y - TUBE.r, 3.2, M.dark, root, [x, (TUBE.y - TUBE.r) / 2, 0]);
+// bowl stem up to the spoon
+const stemTop = PIVOT.y - 0.4;
+mesh(new THREE.CylinderGeometry(0.4, 0.4, stemTop - TUBE.y - TUBE.r + 0.3, 20, 1, true), M.glass, root,
+  [BOWL_X, (stemTop + TUBE.y + TUBE.r - 0.3) / 2, 0]);
+mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.25, 24), M.dark, root, [BOWL_X, TUBE.y + TUBE.r - 0.05, 0]);
+label('Steamroller tube', root, [14, TUBE.y + 2.4, 0]);
+
+const smokeGeo = new THREE.CylinderGeometry(TUBE.r - 0.12, TUBE.r - 0.12, 1, 32);
+smokeGeo.rotateZ(-PI / 2).translate(0.5, 0, 0);
+const tubeSmoke = mesh(smokeGeo, M.smoke.clone(), root, [0, TUBE.y, 0]);
+
+label('Smoke tube (vacuum via solenoid)', root, [NOZZLE_X, TUBE.y + 1.8, 0]);
+
+// ---------- cam + carb plunger ----------
+// Cam profile vs. revolution fraction psi at the follower:
+// ramp up (reseal) -> high dwell (carb sealed) -> step drop (release) -> low dwell (carb open).
+const CAM_RAMP = 0.15, CAM_DROP = 0.75;
+function camProfile(psi) {
+  if (psi < CAM_RAMP) return CAM.rMin + (CAM.rMax - CAM.rMin) * (1 - Math.cos(PI * psi / CAM_RAMP)) / 2;
+  return psi < CAM_DROP ? CAM.rMax : CAM.rMin;
+}
+// The follower rides on the +x side; as the cam turns by theta, the profile point at angle -theta meets it.
+const camPsi = theta => (((theta / TAU) % 1) + 1) % 1;
+const camContactR = theta => camProfile(camPsi(theta));
+const camShape = new THREE.Shape();
+for (let i = 0; i <= 200; i++) {
+  const psi = i / 200;
+  // Duplicate the drop point so the step is a sharp radial face.
+  const pts = Math.abs(psi - CAM_DROP) < 1e-9 ? [CAM.rMax, CAM.rMin] : [camProfile(Math.min(psi, 0.999999))];
+  for (const r of pts) {
+    const x = r * Math.cos(-TAU * psi), y = r * Math.sin(-TAU * psi);
+    i ? camShape.lineTo(x, y) : camShape.moveTo(x, y);
+  }
+}
+const camGeo = new THREE.ExtrudeGeometry(camShape, { depth: 0.8, bevelEnabled: false, curveSegments: 1 });
+camGeo.translate(0, 0, -0.4);
+const camGroup = new THREE.Group();
+camGroup.position.set(CAM.x, CAM.y, 0);
+root.add(camGroup);
+mesh(camGeo, M.cam, camGroup);
+cylZ(0.5, 1.2, M.steel, camGroup, [0, 0, 0]);
+cylZ(0.25, 2.6, M.steel, root, [CAM.x, CAM.y, -0.9]);
+box(3, 3, 2.4, M.dark, root, [CAM.x, CAM.y, -3.2]);
+box(2.4, CAM.y - 1.5, 2, M.dark, root, [CAM.x, (CAM.y - 1.5) / 2, -3.2]);
+label('Cam + motor', root, [CAM.x, CAM.y + 4, -1]);
+
+// plunger: roller, clevis, rod, rubber stopper that seals the carb (origin = roller centre)
+const plunger = new THREE.Group();
+plunger.position.y = CAM.y;
+root.add(plunger);
+cylZ(ROLLER_R, 0.9, M.steel, plunger, [0, 0, 0]);
+box(0.7, 1.2, 1.3, M.arm, plunger, [0.55, 0, 0]);
+cylX(0.22, STOPPER_OFFSET - 0.6 - 0.9, M.steel, plunger, [(0.9 + STOPPER_OFFSET - 0.6) / 2, 0, 0]);
+cylX(TUBE.r + 0.4, 0.6, M.rubber, plunger, [STOPPER_OFFSET - 0.3, 0, 0]);
+label('Carb plunger', plunger, [STOPPER_OFFSET - 0.3, -2.6, 0]);
+// guide bushing (fixed)
+box(BUSHING.x1 - BUSHING.x0, 1.6, 1.6, M.dark, root, [(BUSHING.x0 + BUSHING.x1) / 2, CAM.y, 0]);
+box(BUSHING.x1 - BUSHING.x0, CAM.y - 0.8, 1.6, M.dark, root, [(BUSHING.x0 + BUSHING.x1) / 2, (CAM.y - 0.8) / 2, 0]);
+
+// return spring between clevis and bushing: keeps the roller on the cam and snaps the carb open at the drop
+const SPRING_REST = 3;
+const spring = mesh(new THREE.TubeGeometry(new Helix(0.6, 7, SPRING_REST), 300, 0.08, 8), M.spring, root, [0, CAM.y, 0]);
+label('Return spring', root, [-4, CAM.y + 1.8, 0]);
+
+// ---------- dump arm + spoon ----------
+const arm = new THREE.Group();
+arm.position.copy(PIVOT);
+root.add(arm);
+cylX(0.45, 1.6, M.steel, arm, [0.5, 0, 0]);
+box(0.6, 0.35, ARM_LEN - 1.3, M.arm, arm, [0, -0.25, (ARM_LEN - 1.3) / 2]);
+const cup = new THREE.Group();
+cup.position.set(0, -0.4, ARM_LEN);
+arm.add(cup);
+const CUP_PROFILE = [[0.4, 0], [0.75, 0.05], [1.05, 0.25], [1.25, 0.6], [1.3, 1.0]];   // [r, h]
+const CUP_LATHE = CUP_PROFILE.map(([r, h]) => new THREE.Vector2(r, h));
+mesh(new THREE.LatheGeometry(CUP_LATHE, 40), M.steel2, cup);
+function cupR(h) {
+  for (let i = 1; i < CUP_PROFILE.length; i++) {
+    const [r0, h0] = CUP_PROFILE[i - 1], [r1, h1] = CUP_PROFILE[i];
+    if (h <= h1) return r0 + (r1 - r0) * (h - h0) / (h1 - h0);
+  }
+  return CUP_PROFILE.at(-1)[0];
+}
+const spoonPebbles = pebbleField(cup, M.contents, 130, inRevolution(0.1, 0.75, h => cupR(h) - 0.14), [0.09, 0.15], sandColor);
+spoonPebbles.pts.forEach(q => { q.ash = ashColorOf(new THREE.Color()); });
+const ember = new THREE.PointLight(0xff6a20, 0, 0.12, 2);
+ember.position.set(0, 0.8, 0);
+cup.add(ember);
+label('Spoon bowl', cup, [0, 1.6, 0]);
+box(1.6, 2.4, 2.2, M.dark, root, [PIVOT.x + 1.9, PIVOT.y, PIVOT.z]);
+box(1.6, PIVOT.y - 1.2, 2.2, M.dark, root, [PIVOT.x + 1.9, (PIVOT.y - 1.2) / 2, PIVOT.z]);
+label('Dump servo', root, [PIVOT.x + 3.4, PIVOT.y + 1.2, PIVOT.z]);
+
+// ---------- ash can ----------
+mesh(new THREE.CylinderGeometry(CAN.r, CAN.r, CAN.h, 40, 1, true), M.can, root, [CAN.x, CAN.h / 2, CAN.z]);
+mesh(new THREE.CylinderGeometry(CAN.r, CAN.r, 0.2, 40), M.can, root, [CAN.x, 0.1, CAN.z]);
+const rim = mesh(new THREE.TorusGeometry(CAN.r, 0.1, 8, 48), M.can, root, [CAN.x, CAN.h, CAN.z]);
+rim.rotation.x = PI / 2;
+const canPebbles = pebbleField(root, M.pebble, 700, inRevolution(0.3, 4.6, () => CAN.r - 0.2, CAN.x, CAN.z), [0.16, 0.26], ashColorOf);
+canPebbles.im.count = 0;
+label('Ash can', root, [CAN.x, CAN.h + 1, CAN.z - CAN.r]);
+
+// ---------- auger feeder ----------
+const AUG = { x0: 10, x1: 17, y: 11, z: 2.4 };
+const augLen = AUG.x1 - AUG.x0;
+cylX(0.9, augLen, M.augerGlass, root, [(AUG.x0 + AUG.x1) / 2, AUG.y, AUG.z], true);
+cylX(0.95, 0.2, M.dark, root, [AUG.x0, AUG.y, AUG.z]);
+const screw = new THREE.Group();
+screw.position.set(AUG.x0, AUG.y, AUG.z);
+root.add(screw);
+cylX(0.22, augLen, M.steel, screw, [augLen / 2, 0, 0]);
+mesh(new THREE.TubeGeometry(new Helix(0.65, 9, augLen), 300, 0.1, 6), M.auger, screw);
+mesh(new THREE.CylinderGeometry(2.4, 0.8, 3.5, 32, 1, true), M.auger, root, [16.2, AUG.y + 2.4, AUG.z]);
+const HOP = { x: 16.2, y0: AUG.y + 0.65, h: 3.5, r0: 0.8, r1: 2.4 };
+const hopperPebbles = pebbleField(root, M.pebble, 600,
+  inRevolution(HOP.y0 + 0.1, HOP.y0 + 2.7, y => HOP.r0 + (HOP.r1 - HOP.r0) * (y - HOP.y0) / HOP.h - 0.18, HOP.x, AUG.z),
+  [0.1, 0.17], sandColor);
+// rocks riding the bottom of the auger trough, from under the hopper to the outlet
+const CONVEY_LEN = HOP.x - AUG.x0;
+const conveyor = pebbleField(root, M.pebble, 80, () => V(rand(0, CONVEY_LEN), rand(-0.6, -0.3), rand(-0.4, 0.4)), [0.09, 0.15], sandColor);
+function poseConveyor(shift) {
+  conveyor.pts.forEach((q, i) => {
+    const x = ((q.p.x - shift) % CONVEY_LEN + CONVEY_LEN) % CONVEY_LEN;
+    _d.position.set(AUG.x0 + x, AUG.y + q.p.y, AUG.z + q.p.z);
+    _d.rotation.copy(q.e); _d.rotation.x += shift * 3;
+    _d.scale.setScalar(q.s); _d.updateMatrix();
+    conveyor.im.setMatrixAt(i, _d.matrix);
+  });
+  conveyor.im.instanceMatrix.needsUpdate = true;
+}
+poseConveyor(0);
+box(1.6, 1.8, 1.8, M.dark, root, [AUG.x1 + 0.8, AUG.y, AUG.z]);
+box(0.8, AUG.y, 0.8, M.dark, root, [13.5, AUG.y / 2, AUG.z]);
+const SPOUT_TIP = V(10.25, 9.0, 1.6);
+cylBetween(V(10.5, AUG.y - 0.7, AUG.z), SPOUT_TIP, 0.35, M.auger, root, true);
+label('Auger feeder', root, [16.2, AUG.y + 4.8, AUG.z]);
+
+// ---------- nichrome heater socket (fixed, like a car lighter socket) ----------
+// The spoon drops into this well at arm = 0. Air gets in through the open top and the
+// arm slot (facing the pivot, -z) and is pulled down through the load into the stem.
+const SOCK = { y0: 6.75, y1: 8.1, rIn: 1.65, rOut: 1.95, slot: 0.6 };   // slot = half-angle, rad
+// theta convention matches CylinderGeometry: x = r sin(theta), z = r cos(theta); -z is theta = PI
+function annularSector(rIn, rOut, t0, t1, depth) {
+  const sh = new THREE.Shape(), pt = (r, t) => [r * Math.sin(t), -r * Math.cos(t)], N = 48;
+  sh.moveTo(...pt(rOut, t0));
+  for (let i = 1; i <= N; i++) sh.lineTo(...pt(rOut, t0 + (t1 - t0) * i / N));
+  for (let i = N; i >= 0; i--) sh.lineTo(...pt(rIn, t0 + (t1 - t0) * i / N));
+  const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false, curveSegments: 1 });
+  return g.rotateX(-PI / 2);   // extrude along +y
+}
+const socket = new THREE.Group();
+socket.position.set(BOWL_X, 0, 0);
+root.add(socket);
+const slot0 = PI + SOCK.slot, slot1 = PI - SOCK.slot + TAU;
+mesh(annularSector(SOCK.rIn, SOCK.rOut, slot0, slot1, SOCK.y1 - SOCK.y0), M.ceramic, socket, [0, SOCK.y0, 0]);
+// floor: ring with a hole for the stem, sitting on top of the tube
+mesh(annularSector(0.55, SOCK.rOut, 0, TAU, 0.15), M.ceramic, socket, [0, SOCK.y0 - 0.15, 0]);
+// nichrome element: serpentine winding on the inner wall, doubling back at the slot
+const coilPts = [];
+const COIL_R = SOCK.rIn - 0.1, COIL_ROWS = 6;
+for (let k = 0; k < COIL_ROWS; k++) {
+  const y = SOCK.y0 + 0.2 + k * (SOCK.y1 - SOCK.y0 - 0.35) / (COIL_ROWS - 1);
+  for (let i = 0; i <= 40; i++) {
+    const f = k % 2 ? 1 - i / 40 : i / 40;
+    const t = slot0 + 0.08 + (slot1 - slot0 - 0.16) * f;
+    coilPts.push(V(COIL_R * Math.sin(t), y, COIL_R * Math.cos(t)));
+  }
+}
+mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(coilPts), 600, 0.06, 6), M.nichrome, socket);
+const coilLight = new THREE.PointLight(0xff4010, 0, 0.12, 2);
+coilLight.position.set(0, 7.6, 0);
+socket.add(coilLight);
+// bracket to a post beside the tube (+z side, clear of the arm swing)
+box(0.8, 0.4, 1.4, M.dark, socket, [0, 7.2, SOCK.rOut + 0.5]);
+box(0.8, 7.4, 0.8, M.dark, socket, [0, 3.7, SOCK.rOut + 1.2]);
+label('Nichrome heater socket', socket, [-2.6, 8.6, 1.5]);
+
+// ---------- check camera ----------
+const CAM_HEAD = V(12.4, 16, -0.6), CAM_LOOK = V(BOWL_X, 7.6, 0);
+box(0.8, 16.5, 0.8, M.dark, root, [14.5, 8.25, -1.8]);
+cylBetween(V(14.5, 16.3, -1.8), CAM_HEAD, 0.25, M.dark);
+const camHead = new THREE.Group();
+camHead.position.copy(CAM_HEAD);
+camHead.quaternion.setFromUnitVectors(V(0, 0, 1), CAM_LOOK.clone().sub(CAM_HEAD).normalize());
+root.add(camHead);
+box(1.6, 1.2, 2, M.camBody, camHead, [0, 0, -0.3]);
+cylZ(0.4, 0.5, M.lens, camHead, [0, 0, 0.85]);
+const frustumH = CAM_LOOK.distanceTo(CAM_HEAD);
+const frGeo = new THREE.ConeGeometry(2.2, frustumH, 4, 1, true);
+frGeo.rotateY(PI / 4).rotateX(-PI / 2).translate(0, 0, frustumH / 2);
+mesh(frGeo, M.frustum, camHead);
+label('Check camera', camHead, [0, 1.3, 0]);
+
+root.traverse(o => {
+  if (!o.isMesh) return;
+  o.castShadow = !o.material.transparent;
+  o.receiveShadow = true;
+});
+
+// ---------- particles ----------
+const grainGeo = pebbleGeo;
+const puffGeo = new THREE.IcosahedronGeometry(0.5, 1);
+const pools = { grain: [], ash: [], smoke: [] };
+const particles = [];
+function spawn(kind, pos, vel, o = {}) {
+  let m = pools[kind].pop();
+  if (!m) {
+    m = kind === 'smoke'
+      ? new THREE.Mesh(puffGeo, M.smoke.clone())
+      : new THREE.Mesh(grainGeo, kind === 'grain' ? M.granule : M.ash);
+    m.castShadow = kind !== 'smoke';
+  }
+  m.position.copy(pos);
+  m.scale.setScalar(o.size ?? 1);
+  root.add(m);
+  particles.push({ kind, m, vel: vel.clone(), age: 0, life: o.life ?? 3, g: o.g ?? 0, drag: o.drag ?? 0,
+    floor: o.floor ?? (() => -Infinity), size: o.size ?? 1, grow: o.grow ?? 0, alpha: o.alpha ?? 1, onLand: o.onLand });
+}
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.age += dt;
+    p.vel.y -= p.g * dt;
+    if (p.drag) p.vel.multiplyScalar(Math.exp(-p.drag * dt));
+    p.m.position.addScaledVector(p.vel, dt);
+    if (p.kind === 'smoke') {
+      const k = p.age / p.life;
+      p.m.scale.setScalar(p.size * (1 + p.grow * k));
+      p.m.material.opacity = p.alpha * (1 - k) ** 2;
+    } else {
+      p.m.rotation.x += dt * 6;
+    }
+    const landed = p.m.position.y < p.floor();
+    if (landed || p.age > p.life) {
+      if (landed && p.onLand) p.onLand();
+      root.remove(p.m);
+      pools[p.kind].push(p.m);
+      particles.splice(i, 1);
+    }
+  }
+}
+
+// ---------- cycle ----------
+const PHASES = [
+  { id: 'fill', name: 'Auger fill', dur: 3 },
+  { id: 'ignite', name: 'Heat up', dur: 1.5 },
+  { id: 'draw', name: 'Burn + draw', dur: 5 },
+  { id: 'shoot', name: 'Cam release', dur: 1.4 },
+  { id: 'check', name: 'Camera check', dur: 1.8 },
+  { id: 'dump', name: 'Dump ash', dur: 2.4 },
+  { id: 'return', name: 'Return', dur: 1.8 },
+];
+const CYCLE = PHASES.reduce((s, p) => s + p.dur, 0);
+const phaseStart = id => { let t = 0; for (const p of PHASES) { if (p.id === id) return t; t += p.dur; } };
+// Cam position (revolution fraction) through one cycle: sealed through fill/heat/draw,
+// drops early in the release phase, stays open through check/dump, ramps shut during return.
+const CAM_KEYS = [
+  [0, CAM_RAMP],
+  [phaseStart('shoot') + 0.2 * PHASES[3].dur, CAM_DROP + 0.01],
+  [phaseStart('return'), 1],
+  [CYCLE, 1 + CAM_RAMP],
+];
+function camAt(t) {
+  let i = 1;
+  while (t > CAM_KEYS[i][0]) i++;
+  const [t0, a] = CAM_KEYS[i - 1], [t1, b] = CAM_KEYS[i];
+  return a + (b - a) * (t - t0) / (t1 - t0);
+}
+
+const S = {
+  t: 0, cycle: 0, fill: 0, burn: 0, ember: 0, heaterGlow: 0, arm: 0, auger: 0,
+  camAngle: TAU * CAM_RAMP, rf: 0, prevContact: 0, density: 0, sinceDrop: 99, vacuum: false,
+  ashCount: 0, convey: 0, dumped: false, acc: 0, acc2: 0, vision: 'idle',
+};
+S.rf = S.prevContact = camContactR(S.camAngle);
+
+function phaseAt(t) {
+  let i = 0;
+  while (t >= PHASES[i].dur) t -= PHASES[i++].dur;
+  return { i, id: PHASES[i].id, u: t / PHASES[i].dur };
+}
+// emits `rate` per second, fractional remainder carried in S[key]
+function emit(key, rate, dt, fn) {
+  S[key] += rate * dt;
+  while (S[key] >= 1) { S[key]--; fn(); }
+}
+const tmp = V(0, 0, 0);
+const ashTop = () => (S.ashCount ? canPebbles.pts[S.ashCount - 1].p.y : 0.3);
+
+function step(dt) {
+  S.t += dt;
+  if (S.t >= CYCLE) {
+    S.t -= CYCLE;
+    S.cycle++;
+    S.dumped = false;
+    if (S.ashCount > canPebbles.pts.length - 150) S.ashCount = 0;   // can emptied
+  }
+  const { id, u } = phaseAt(S.t);
+  const n = S.cycle;
+  const time = performance.now() / 1000;
+  S.camAngle = TAU * (n + camAt(S.t));
+  S.vacuum = id === 'draw' || (id === 'shoot' && S.sinceDrop < 0.8);
+
+  switch (id) {
+    case 'fill':
+      S.arm = 0; S.heaterGlow = 0; S.burn = 0; S.ember = 0;
+      S.fill = ease(clamp01(u / 0.9));
+      S.auger += dt * 9;
+      S.convey += dt * 1.6;
+      S.vision = 'empty → filling';
+      if (u < 0.85) emit('acc', 30, dt, () => spawn('grain',
+        V(SPOUT_TIP.x + rand(-0.1, 0.1), SPOUT_TIP.y - 0.1, SPOUT_TIP.z - 0.1),
+        V(rand(-0.4, 0.4), -1, rand(-9, -7)), { size: rand(0.09, 0.14), g: 150, life: 2, floor: () => 7.4 }));
+      break;
+    case 'ignite':
+      S.heaterGlow = u;
+      S.ember = clamp01((u - 0.6) / 0.4) * 0.6;
+      S.vision = 'loaded';
+      break;
+    case 'draw':
+      S.heaterGlow = 1;
+      S.burn = u;
+      S.ember = (0.75 + 0.25 * Math.sin(time * 23) * Math.sin(time * 7)) * (1 - 0.5 * u);
+      S.density = u;
+      S.sinceDrop = 99;
+      S.vision = 'burning';
+      emit('acc', 12, dt, () => spawn('smoke', V(BOWL_X, TUBE.y + 0.8, 0),
+        V(rand(-6, 6), -1, rand(-0.5, 0.5)), { size: 0.45, life: 1, alpha: 0.35, grow: 1.2, drag: 1 }));
+      // air drawn in through the top of the socket and down through the load
+      emit('acc2', 6, dt, () => spawn('smoke', V(BOWL_X + rand(-0.8, 0.8), 9.2, rand(-0.8, 0.8)),
+        V(0, -3, 0), { size: 0.18, life: 0.45, alpha: 0.18, grow: 0.5 }));
+      break;
+    case 'shoot': {
+      S.burn = 1;
+      S.ember = 0.5 * (1 - u);
+      S.heaterGlow = 1 - u;
+      S.vision = 'burning';
+      break;
+    }
+    case 'check':
+      S.heaterGlow = 0; S.ember = 0; S.burn = 1;
+      S.vision = u < 0.45 ? 'analysing…' : 'spent: ash detected → dump';
+      break;
+    case 'dump':
+      S.arm = -PI * ease(u);
+      S.vision = 'dumping';
+      if (!S.dumped && S.arm < -2.3) {
+        S.dumped = true;
+        // every rock in the spoon falls out as its own particle
+        for (const q of spoonPebbles.pts.slice(0, spoonPebbles.im.count)) {
+          root.worldToLocal(cup.localToWorld(tmp.copy(q.p)));
+          spawn('ash', tmp, V(rand(-1, 1), rand(-2, 0), rand(-1, 1)), { size: q.s, g: 150, life: 3, floor: ashTop,
+            onLand: () => { S.ashCount = Math.min(canPebbles.pts.length, S.ashCount + 1); } });
+        }
+        S.fill = 0;
+      }
+      break;
+    case 'return':
+      S.arm = -PI * (1 - ease(u));
+      S.vision = 'idle';
+      break;
+  }
+
+  // follower: the cam pushes the stopper into the carb; at the step the spring snaps it open,
+  // air rushes in behind the smoke and the vacuum clears the tube in one shot
+  const contact = camContactR(S.camAngle);
+  if (contact < S.prevContact - 1) {
+    S.sinceDrop = 0;
+    for (let i = 0; i < 16; i++) spawn('smoke', V(rand(TUBE.x0, TUBE.x1), TUBE.y + rand(-0.6, 0.6), rand(-0.6, 0.6)),
+      V(rand(35, 50), 0, 0), { size: 0.5, life: 0.25, alpha: 0.5 * S.density, grow: 0.5 });
+    for (let i = 0; i < 20; i++) spawn('smoke', V(NOZZLE_X + 0.4, TUBE.y, 0),
+      V(rand(14, 28), rand(-1, 3), rand(-2.5, 2.5)),
+      { size: 0.6, life: rand(1.4, 2.4), alpha: 0.75 * S.density, grow: 4, drag: 2.2 });
+  }
+  S.prevContact = contact;
+  S.rf = contact >= S.rf ? contact : Math.max(contact, S.rf - 70 * dt);
+  S.sinceDrop += dt;
+  if (S.sinceDrop < 50) S.density *= Math.exp(-6 * dt);
+
+  updateParticles(dt);
+}
+
+// ---------- apply state to the scene ----------
+const tmpColor = new THREE.Color();
+let lastBurn = -1, lastConvey = 0;
+function pose() {
+  camGroup.rotation.z = S.camAngle;
+  plunger.position.x = CAM.x + S.rf + ROLLER_R;
+  tubeSmoke.position.x = TUBE.x0;
+  tubeSmoke.scale.x = TUBE.x1 - TUBE.x0;
+  tubeSmoke.material.opacity = 0.55 * S.density;
+  tubeSmoke.visible = S.density > 0.01;
+  spring.position.x = plunger.position.x + 0.9;
+  spring.scale.x = (BUSHING.x0 - spring.position.x) / SPRING_REST;
+
+  arm.rotation.x = S.arm;
+  spoonPebbles.im.count = Math.round(S.fill * spoonPebbles.pts.length);
+  if (S.burn !== lastBurn) {
+    lastBurn = S.burn;
+    spoonPebbles.pts.forEach((q, i) => spoonPebbles.im.setColorAt(i, tmpColor.lerpColors(q.color, q.ash, S.burn)));
+    spoonPebbles.im.instanceColor.needsUpdate = true;
+  }
+  M.contents.emissiveIntensity = S.ember * 1.2;
+  ember.intensity = S.ember * 0.04;
+
+  M.nichrome.emissiveIntensity = S.heaterGlow * 2.5;
+  coilLight.intensity = S.heaterGlow * 0.03;
+
+  screw.rotation.x = S.auger;
+  canPebbles.im.count = S.ashCount;
+  // hopper drains a little each load and is topped up every 6 cycles
+  const drained = (S.cycle % 6) + (phaseAt(S.t).id === 'fill' ? S.fill : 1);
+  hopperPebbles.im.count = hopperPebbles.pts.length - Math.round(drained * 60);
+  if (S.convey !== lastConvey) { lastConvey = S.convey; poseConveyor(S.convey); }
+
+  const { id } = phaseAt(S.t);
+  const t = performance.now() / 1000;
+  M.frustum.opacity = id === 'check' ? 0.14 + 0.08 * Math.sin(t * 12) : 0.04;
+  M.lens.emissiveIntensity = id === 'check' ? 3 : 1;
+}
+
+// ---------- UI ----------
+const phasesEl = document.getElementById('phases');
+const chips = PHASES.map(p => {
+  const c = document.createElement('span');
+  c.className = 'chip';
+  c.textContent = p.name;
+  phasesEl.appendChild(c);
+  return c;
+});
+const readout = document.getElementById('readout');
+let playing = true, speed = 1, showLabels = true;
+const playBtn = document.getElementById('play');
+function togglePlay() { playing = !playing; playBtn.textContent = playing ? 'Pause' : 'Play'; }
+playBtn.onclick = togglePlay;
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); togglePlay(); } });
+document.getElementById('speed').onchange = e => { speed = +e.target.value; };
+document.getElementById('labels').onclick = e => {
+  showLabels = !showLabels;
+  e.target.textContent = `Labels: ${showLabels ? 'on' : 'off'}`;
+  labels.forEach(l => { l.visible = showLabels; });
+};
+document.getElementById('frame').onclick = frameView;
+
+function updateUI() {
+  const { i } = phaseAt(S.t);
+  chips.forEach((c, k) => c.classList.toggle('on', k === i));
+  const gap = CARB_X - (plunger.position.x + STOPPER_OFFSET);
+  const deg = camPsi(S.camAngle) * 360;
+  readout.textContent = [
+    `cycle      ${S.cycle + 1}`,
+    `cam        ${deg.toFixed(0).padStart(3)}°`,
+    `carb       ${gap < 0.01 ? 'sealed' : `open ${gap.toFixed(1)} cm`}`,
+    `vacuum     ${S.vacuum ? 'on' : 'off'}`,
+    `chamber    ${(S.density * 100).toFixed(0).padStart(3)} % smoke`,
+    `heater     ${S.heaterGlow > 0.05 ? `on ${(S.heaterGlow * 100).toFixed(0)} %` : 'off'}`,
+    `arm        ${(-S.arm * 180 / PI).toFixed(0).padStart(3)}°`,
+    `camera     ${S.vision}`,
+    `ash can    ${(S.ashCount / canPebbles.pts.length * 100).toFixed(0).padStart(3)} %`,
+  ].join('\n');
+}
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  labelRenderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (playing) step(dt * speed);
+  pose();
+  updateUI();
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
