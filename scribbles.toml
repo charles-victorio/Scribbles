@@ -7,6 +7,11 @@
 #                  If omitted, it links to projects/<slug>/index.html instead.
 
 [[project]]
+slug = "mwpc-ul-presentation-oct-23-2026"
+name = "MWPC UL Presentation Oct 23 2026"
+description = "3d slides for Upsilon Labs presentation about the mwpc project"
+
+[[project]]
 slug = "infinipipe_1"
 name = "Infinipipe 1"
 description = "Model of a prototype automatic continuous steamroller pipe."
